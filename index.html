@@ -182,6 +182,8 @@
   .btn-success:hover { background: var(--success); color: #fff; }
   .btn-danger { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
   .btn-danger:hover { background: var(--danger); color: #fff; }
+  .btn-info { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.3); }
+  .btn-info:hover { background: var(--info); color: #fff; }
   .btn-sm { padding: 6px 12px; font-size: 11px; min-height: 0; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -358,12 +360,6 @@
   }
   .designer-coord .form-group label { font-size: 11px; }
 
-  /* Fix typing experience inside fields when editing text */
-  .designer-field input {
-    border: none; background: transparent; color: inherit; font: inherit;
-    outline: none; width: 100%; text-align: inherit;
-  }
-
   @media (max-width: 768px) {
     .sidebar { transform: translateX(-100%); transition: transform 0.2s; }
     .sidebar.open { transform: translateX(0); }
@@ -394,7 +390,7 @@
     <nav class="nav">
       <div class="nav-item active" onclick="showPage('home')"><span class="icon">🏆</span> Home</div>
       <div class="nav-item" onclick="showEventsByFilter('all')"><span class="icon">📅</span> All Events</div>
-      <div class="nav-item" onclick="showParticipantsPublic()"><span class="icon">👥</span> Participants</div>
+      <div class="nav-item" onclick="showParticipantsViewOnly()"><span class="icon">👥</span> Participants</div>
       <div class="nav-item" onclick="showResultsPointsWise()"><span class="icon">📊</span> Points Wise</div>
       <div class="nav-item" onclick="showCertificateCenter()"><span class="icon">🎓</span> E-Certificates</div>
       <div class="nav-item" onclick="showAdminLogin()"><span class="icon">⚙️</span> Admin</div>
@@ -477,8 +473,6 @@ const HOUSE_META = {
 };
 const PLACE_POINTS = { first_place: 5, second_place: 3, third_place: 1, fourth_place: 0 };
 
-// Default field layout — X%, Y%, font size (px), weight, align
-// These are the starting coordinates. Adjust visually in the designer.
 const DEFAULT_LAYOUT = {
   name:    { x: 50,  y: 44.5, size: 22, weight: 700, align: 'center', color: '#1d1d1d' },
   class:   { x: 33,  y: 52.5, size: 14, weight: 600, align: 'center', color: '#2b2b2b' },
@@ -508,7 +502,6 @@ let certTemplateDataUrl = null;
 let certTemplateName = '';
 let certLayout = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
 
-// Designer state
 let designerActiveField = 'name';
 let designerDragging = null;
 let designerCanvasRect = null;
@@ -744,9 +737,7 @@ function isEventPassed(event) {
 // ═══════════════════════════════════════════════════════════════
 //  HOME PAGE
 // ═══════════════════════════════════════════════════════════════
-function renderHome() {
-  renderHomeDayWise();
-}
+function renderHome() { renderHomeDayWise(); }
 
 function renderHomeDayWise() {
   const el = document.getElementById('homeContent');
@@ -1078,40 +1069,422 @@ function showEventsByFilter(filter) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  PUBLIC PARTICIPANTS PAGE (moved out of admin)
+//  PUBLIC PARTICIPANTS — VIEW ONLY
 // ═══════════════════════════════════════════════════════════════
-function showParticipantsPublic() {
+function showParticipantsViewOnly() {
   const page = document.getElementById('page-dynamic');
   page.innerHTML = `
     <div class="page-header">
       <h1>👥 Participants</h1>
-      <p>Add participants to events and view registered participants</p>
+      <p>View all registered participants, grouped by house for each event</p>
     </div>
-    <div class="panel" style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
-      <button class="btn btn-primary" id="parttab-add" onclick="switchPublicPartTab('add')">➕ Add Participants</button>
-      <button class="btn btn-secondary" id="parttab-view" onclick="switchPublicPartTab('view')">📋 View Participants</button>
+    <div class="panel">
+      <h3>📋 Registered Participants</h3>
+      <div class="alert alert-info">
+        All participants of one house are shown together, then the next house, and so on.
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Filter by Event</label>
+          <select id="adminViewEvent" onchange="onAdminViewEventChange()">
+            <option value="">— All Events —</option>
+            ${allEvents.map(e => `<option value="${e.id}">${esc(e.event_name)} — ${esc(getDayLabel(e.event_date))}${e.event_date ? ' ('+e.event_date+')' : ''}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="printAdminParticipantList()">🖨️ Print List</button>
+        <button class="btn btn-secondary" onclick="loadAdminRegisteredList()">🔄 Refresh</button>
+      </div>
+      <div id="adminRegisteredList" style="margin-top:16px;">Loading…</div>
     </div>
-    <div id="publicPartContent"></div>
   `;
   showPage('dynamic', '👥 Participants');
-  switchPublicPartTab('add');
+  adminViewEventFilter = '';
+  loadAdminRegisteredList();
 }
 
-function switchPublicPartTab(tab) {
-  ['add','view'].forEach(t => {
-    const b = document.getElementById('parttab-' + t);
+function onAdminViewEventChange() {
+  adminViewEventFilter = document.getElementById('adminViewEvent')?.value || '';
+  loadAdminRegisteredList();
+}
+
+async function loadAdminRegisteredList() {
+  const el = document.getElementById('adminRegisteredList');
+  if(!el) return;
+  try {
+    let query = db.from('sports_participants').select('*');
+    if(adminViewEventFilter) query = query.eq('event_id', parseInt(adminViewEventFilter, 10));
+    const { data, error } = await query;
+    if(error) throw error;
+    const rows = data || [];
+    _adminRegisteredCache = rows;
+    if(!rows.length) { el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);">No participants found.</div>`; return; }
+
+    const byEvent = {};
+    rows.forEach(r => {
+      const eid = String(r.event_id);
+      if(!byEvent[eid]) byEvent[eid] = { event_id: eid, rows: [] };
+      byEvent[eid].rows.push(r);
+    });
+    Object.values(byEvent).forEach(g => {
+      const ev = allEvents.find(e => String(e.id) === String(g.event_id));
+      g.event_name = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
+      g.event_date = ev?.event_date || '';
+    });
+
+    const groupKeys = Object.keys(byEvent).sort((a,b) => {
+      const ea = byEvent[a], eb = byEvent[b];
+      return compareAscending(ea.event_date, eb.event_date) || compareAscending(ea.event_name, eb.event_name);
+    });
+
+    let html = '';
+    groupKeys.forEach(key => {
+      const g = byEvent[key];
+      html += `<div style="margin-bottom:28px;">`;
+      html += `<div style="font-family:'Cinzel',serif;font-size:17px;color:var(--gold);font-weight:700;margin-bottom:4px;">${esc(g.event_name)}</div>`;
+      html += `<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">${esc(getDayLabel(g.event_date))}${g.event_date ? ' · ' + esc(formatDate(g.event_date)) : ''} · ${g.rows.length} participant(s)</div>`;
+
+      HOUSE_ORDER.forEach(house => {
+        const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
+        if(!houseRows.length) return;
+        const meta = HOUSE_META[houseKey(house)] || { color: '#999' };
+        html += `<div class="house-group">`;
+        html += `<div class="house-group-head" style="background:${meta.color}22;color:${meta.color};border-bottom:1px solid ${meta.color}55;">`;
+        html += `<span class="dot" style="background:${meta.color};"></span>${esc(house)}`;
+        html += `<span class="count">${houseRows.length} student(s)</span>`;
+        html += `</div>`;
+        html += `<div style="overflow-x:auto;">`;
+        html += `<table class="events-table"><thead><tr>
+          <th>#</th><th>Adm No</th><th>Roll No</th><th>Name</th><th>Class</th><th>Section</th><th>House</th>
+        </tr></thead><tbody>`;
+        houseRows.forEach((r, i) => {
+          const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
+          html += `<tr>
+            <td>${i+1}</td>
+            <td>${esc(r.admission_no || '—')}</td>
+            <td>${esc(linked.roll_no || linked.roll || '—')}</td>
+            <td><strong>${esc(r.student_name || '—')}</strong></td>
+            <td>${esc(r.class || '—')}</td>
+            <td>${esc(r.section || '—')}</td>
+            <td style="color:${meta.color};font-weight:600;">${esc(r.house || '—')}</td>
+          </tr>`;
+        });
+        html += `</tbody></table></div></div>`;
+      });
+
+      html += `</div>`;
+    });
+
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div class="alert alert-error">Could not load: ${esc(e.message)}</div>`;
+  }
+}
+
+function printAdminParticipantList() {
+  if(!_adminRegisteredCache.length) { showToast('No participants to print.', 'warning'); return; }
+  const byEvent = {};
+  _adminRegisteredCache.forEach(r => {
+    const eid = String(r.event_id);
+    if(!byEvent[eid]) byEvent[eid] = { rows: [] };
+    byEvent[eid].rows.push(r);
+  });
+  const groupKeys = Object.keys(byEvent).sort((a,b) => {
+    const ea = allEvents.find(e => String(e.id) === String(a));
+    const eb = allEvents.find(e => String(e.id) === String(b));
+    return compareAscending(ea?.event_date, eb?.event_date) || compareAscending(ea?.event_name, eb?.event_name);
+  });
+
+  let bodyHtml = '';
+  groupKeys.forEach(key => {
+    const g = byEvent[key];
+    const ev = allEvents.find(e => String(e.id) === String(key));
+    const evName = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
+    const evDate = ev?.event_date || '';
+    bodyHtml += `<div style="margin-top:22px; page-break-inside:avoid;">`;
+    bodyHtml += `<div style="font-family:Georgia,serif; font-size:16px; font-weight:bold;">${esc(evName)}</div>`;
+    bodyHtml += `<div style="font-size:11px; color:#555; margin-bottom:8px;">${esc(getDayLabel(evDate))}${evDate ? ' · ' + esc(formatDate(evDate)) : ''}</div>`;
+    HOUSE_ORDER.forEach(house => {
+      const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
+      if(!houseRows.length) return;
+      bodyHtml += `<div style="margin-top:10px; font-weight:bold; font-size:12px;">${esc(house)} — ${houseRows.length} student(s)</div>`;
+      bodyHtml += `<table style="width:100%;border-collapse:collapse;margin:6px 0 12px;">
+        <thead><tr>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:center;width:36px;">#</th>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Adm No</th>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Roll No</th>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Name</th>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Class</th>
+          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Section</th>
+        </tr></thead><tbody>`;
+      houseRows.forEach((r, i) => {
+        const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
+        bodyHtml += `<tr>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;text-align:center;">${i+1}</td>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.admission_no || '—')}</td>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(linked.roll_no || linked.roll || '—')}</td>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;"><strong>${esc(r.student_name || '—')}</strong></td>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.class || '—')}</td>
+          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.section || '—')}</td>
+        </tr>`;
+      });
+      bodyHtml += `</tbody></table>`;
+    });
+    bodyHtml += `</div>`;
+  });
+
+  const win = window.open('', '_blank', 'width=1100,height=800');
+  if(!win) { showToast('Pop-up blocked. Allow pop-ups to print.', 'error'); return; }
+  win.document.write(`<html><head><title>Sports Day Participant List</title><style>
+    body { font-family: Arial, sans-serif; padding: 18px; color: #111; }
+    h1 { text-align: center; margin: 0; font-size: 22px; font-family: Georgia, serif; }
+    h2 { text-align: center; margin: 6px 0 16px; font-size: 13px; color: #555; font-weight: normal; }
+    @media print { body { padding: 10mm; } }
+  </style></head><body>
+    <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
+    <h2>Sports Day 2026 — Participant List (House-wise)</h2>
+    <div style="text-align:center; font-size:11px; color:#666; margin-bottom:12px;">Printed on ${esc(new Date().toLocaleString())}</div>
+    ${bodyHtml}
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch(e){} }, 400);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN
+// ═══════════════════════════════════════════════════════════════
+function showAdminLogin() {
+  if(isAdminLoggedIn) { showAdminDashboard(); return; }
+  openModal('adminLoginModal');
+}
+
+async function verifyPasswordFromDatabase(role, name, pwd) {
+  if(!db) { showToast('DB not connected', 'error'); return null; }
+  try {
+    let q = db.from(AUTH_TABLE).select('*').eq(AUTH_ROLE_COLUMN, role);
+    if(role === 'admin') q = q.ilike(AUTH_NAME_COLUMN, 'admin');
+    const { data, error } = await q.limit(1);
+    if(error) throw error;
+    const rec = data?.[0];
+    return !!rec && String(rec[AUTH_PASSWORD_COLUMN] || '') === String(pwd || '');
+  } catch(e) { console.error(e); showToast('Verify error', 'error'); return null; }
+}
+
+async function verifyAdminLogin() {
+  const pwd = document.getElementById('adminPassword').value;
+  const err = document.getElementById('adminLoginError');
+  const ok = await verifyPasswordFromDatabase('admin', 'admin', pwd);
+  if(ok === null) return;
+  if(ok) {
+    isAdminLoggedIn = true;
+    closeModal('adminLoginModal');
+    document.getElementById('adminPassword').value = '';
+    updateUserBadge();
+    showToast('Admin access granted', 'success');
+    showAdminDashboard();
+  } else {
+    err.textContent = 'Invalid password';
+    err.style.display = 'flex';
+    setTimeout(() => err.style.display = 'none', 3000);
+  }
+}
+
+function logout() {
+  isAdminLoggedIn = false;
+  updateUserBadge();
+  showPage('home', '🏆 Sports Day Championship');
+  showToast('Logged out', 'info');
+}
+
+function updateUserBadge() {
+  const b = document.getElementById('userBadge');
+  const n = document.getElementById('userBadgeName');
+  if(!b || !n) return;
+  if(isAdminLoggedIn) { b.classList.add('visible'); n.textContent = '👑 Admin'; }
+  else b.classList.remove('visible');
+}
+
+function showAdminDashboard() {
+  const page = document.getElementById('page-dynamic');
+  page.innerHTML = `
+    <div class="page-header">
+      <h1>⚙️ Admin Panel</h1>
+      <p>Events, participants, results, and certificate template setup</p>
+    </div>
+    <div class="panel" style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn btn-primary" id="tab-events" onclick="switchAdminTab('events')">📅 Events</button>
+      <button class="btn btn-secondary" id="tab-participants" onclick="switchAdminTab('participants')">➕ Add Participants</button>
+      <button class="btn btn-secondary" id="tab-result" onclick="switchAdminTab('result')">🏆 Add Result</button>
+      <button class="btn btn-secondary" id="tab-manage" onclick="switchAdminTab('manage')">🗂️ Manage</button>
+      <button class="btn btn-secondary" id="tab-cert" onclick="switchAdminTab('cert')">🎓 Certificate Setup</button>
+    </div>
+    <div id="adminTabContent"></div>
+  `;
+  showPage('dynamic', '⚙️ Admin Panel');
+  switchAdminTab('events');
+}
+
+function switchAdminTab(tab) {
+  ['events','participants','result','manage','cert'].forEach(t => {
+    const b = document.getElementById('tab-' + t);
     if(b) b.className = t === tab ? 'btn btn-primary' : 'btn btn-secondary';
   });
-  const c = document.getElementById('publicPartContent');
-  if(tab === 'add') { c.innerHTML = renderPublicAddParticipants(); initAdminParticipantsTab(); }
-  if(tab === 'view') { c.innerHTML = renderPublicViewParticipants(); loadAdminRegisteredList(); }
+  const c = document.getElementById('adminTabContent');
+  if(tab === 'events')       c.innerHTML = renderAdminEventsTab();
+  if(tab === 'participants') { c.innerHTML = renderAdminAddParticipantsTab(); initAdminParticipantsTab(); }
+  if(tab === 'result')       c.innerHTML = renderAdminResultTab();
+  if(tab === 'manage')       c.innerHTML = renderAdminManageTab();
+  if(tab === 'cert')         { c.innerHTML = renderAdminCertificateSetupTab(); initCertDesigner(); }
 }
 
-function renderPublicAddParticipants() {
+// ─────────────── TAB 1: EVENTS ───────────────
+function renderAdminEventsTab() {
+  return `
+    <div class="panel">
+      <h3>➕ Add New Sports Event</h3>
+      <div class="form-grid">
+        <div class="form-group"><label>Event Name *</label><input id="evName" placeholder="e.g., 100m Sprint"></div>
+        <div class="form-group"><label>For Class</label><input id="evClass" placeholder="e.g., VI – VIII"></div>
+        <div class="form-group"><label>Date</label>
+          <select id="evDate">
+            <option value="">— Select Day —</option>
+            <option value="${SPORTS_DAY_1}">Day 1 — ${esc(formatDate(SPORTS_DAY_1))}</option>
+            <option value="${SPORTS_DAY_2}">Day 2 — ${esc(formatDate(SPORTS_DAY_2))}</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Gender</label>
+          <select id="evGender"><option value="">All</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Mixed">Mixed</option></select>
+        </div>
+        <div class="form-group"><label>Category</label><input id="evCategory" placeholder="Track / Field / Team"></div>
+        <div class="form-group"><label>Participants per House</label><input id="evParticipants" placeholder="any / 5 / 3-8" value="any"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn btn-success" onclick="addSportsEvent()">+ Add Event</button>
+        <button class="btn btn-danger" onclick="clearAllSportsEvents()">✕ Clear All Events</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>📋 All Sports Events — ${allEvents.length}</h3>
+      ${!allEvents.length ? '<div style="padding:20px;text-align:center;color:var(--muted);">No events yet.</div>' :
+        allEvents.map(e => `
+          <div class="event-card" style="margin-bottom:12px;">
+            <span class="tag ${hasResultForEvent(e.id) ? 'tag-completed' : e.status === 'suspended' ? 'tag-suspended' : 'tag-upcoming'}">
+              ${hasResultForEvent(e.id) ? 'Result Declared' : e.status === 'suspended' ? 'Suspended' : 'Active'}
+            </span>
+            <h3>${esc(e.event_name)}</h3>
+            <div class="meta">📚 ${esc(e.for_class || 'All')} · 📅 ${esc(formatDate(e.event_date))} · 👥 ${esc(e.participants || 'any')}</div>
+            ${e.gender ? `<div class="meta">👤 ${esc(e.gender)}</div>` : ''}
+            ${e.category ? `<div class="meta">🏷️ ${esc(e.category)}</div>` : ''}
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-info btn-sm" onclick="renameSportsEvent(${e.id})">✏️ Rename</button>
+              <button class="btn btn-primary btn-sm" onclick="changeSportsEventDate(${e.id})">📅 Change Date</button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleSuspendSportsEvent(${e.id})">${e.status === 'suspended' ? 'Resume' : 'Suspend'}</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteSportsEvent(${e.id})">Delete Event</button>
+            </div>
+          </div>`).join('')}
+    </div>
+  `;
+}
+
+async function addSportsEvent() {
+  const name = document.getElementById('evName').value.trim();
+  if(!name) { showToast('Event name required', 'error'); return; }
+  const payload = {
+    event_name: name,
+    for_class: document.getElementById('evClass').value.trim(),
+    event_date: document.getElementById('evDate').value || null,
+    gender: document.getElementById('evGender').value,
+    category: document.getElementById('evCategory').value.trim(),
+    participants: document.getElementById('evParticipants').value.trim() || 'any',
+    status: 'active'
+  };
+  const { error } = await db.from('sports_events').insert([payload]);
+  if(error) { showToast('Error: ' + error.message, 'error'); return; }
+  showToast('Event added!', 'success');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+async function clearAllSportsEvents() {
+  if(!confirm('⚠️ Delete ALL sports events and their results?')) return;
+  await db.from('sports_results').delete().neq('id', 0);
+  await db.from('sports_participants').delete().neq('id', 0);
+  await db.from('sports_events').delete().neq('id', 0);
+  showToast('All sports data cleared', 'warning');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+async function toggleSuspendSportsEvent(id) {
+  const ev = allEvents.find(e => e.id === id);
+  const newStatus = ev.status === 'suspended' ? 'active' : 'suspended';
+  await db.from('sports_events').update({ status: newStatus }).eq('id', id);
+  showToast(`Event ${newStatus === 'suspended' ? 'suspended' : 'resumed'}`, 'info');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+async function renameSportsEvent(id) {
+  const ev = allEvents.find(e => e.id === id);
+  if(!ev) return;
+  const newName = prompt(`Rename event:\n\nCurrent name: "${ev.event_name}"\n\nEnter new name:`, ev.event_name);
+  if(newName === null) return;
+  const trimmed = String(newName).trim();
+  if(!trimmed) { showToast('Name cannot be empty', 'error'); return; }
+  if(trimmed === ev.event_name) { showToast('Name unchanged', 'info'); return; }
+
+  const { error } = await db.from('sports_events').update({ event_name: trimmed }).eq('id', id);
+  if(error) { showToast('Could not rename: ' + error.message, 'error'); return; }
+
+  // Also update the linked result (if any) so certificates use the new name
+  if(hasResultForEvent(id)) {
+    await db.from('sports_results').update({ event_name: trimmed }).eq('event_id', id);
+  }
+  showToast(`✅ Renamed to "${trimmed}"`, 'success');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+async function changeSportsEventDate(id) {
+  const ev = allEvents.find(e => e.id === id);
+  if(!ev) return;
+  const choice = prompt(
+    `Change date for "${ev.event_name}"\n\nEnter 1 for Day 1 (${formatDate(SPORTS_DAY_1)})\nEnter 2 for Day 2 (${formatDate(SPORTS_DAY_2)})\nOr type a full date YYYY-MM-DD`,
+    ev.event_date === SPORTS_DAY_1 ? '1' : ev.event_date === SPORTS_DAY_2 ? '2' : (ev.event_date || '1')
+  );
+  if(choice === null) return;
+  const c = String(choice).trim();
+  let newDate = '';
+  if(c === '1') newDate = SPORTS_DAY_1;
+  else if(c === '2') newDate = SPORTS_DAY_2;
+  else if(/^\d{4}-\d{2}-\d{2}$/.test(c)) newDate = c;
+  else { showToast('Invalid. Use 1, 2, or YYYY-MM-DD', 'error'); return; }
+
+  const { error } = await db.from('sports_events').update({ event_date: newDate }).eq('id', id);
+  if(error) { showToast('Could not update date: ' + error.message, 'error'); return; }
+  showToast(`📅 Date updated to ${formatDate(newDate)}`, 'success');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+async function deleteSportsEvent(id) {
+  if(!confirm('Delete event and all its participants/results?')) return;
+  await db.from('sports_results').delete().eq('event_id', id);
+  await db.from('sports_participants').delete().eq('event_id', id);
+  await db.from('sports_events').delete().eq('id', id);
+  showToast('Event deleted', 'success');
+  await loadEvents();
+  switchAdminTab('events');
+}
+
+// ─────────────── TAB 2: ADD PARTICIPANTS (ADMIN ONLY) ───────────────
+function renderAdminAddParticipantsTab() {
   const eligibleEvents = allEvents.filter(e => e.status !== 'suspended');
   return `
     <div class="panel">
-      <h3>👥 Add Participants to a Sports Event</h3>
+      <h3>➕ Add Participants to a Sports Event</h3>
       <div class="alert alert-info">
         Select an event, then choose the house, then select the students from that house to register.
       </div>
@@ -1150,32 +1523,45 @@ function renderPublicAddParticipants() {
       </div>
       <div id="adminPartStatus"></div>
     </div>
-  `;
-}
 
-function renderPublicViewParticipants() {
-  return `
     <div class="panel">
-      <h3>📋 View Registered Participants</h3>
-      <div class="alert alert-info">
-        All participants of one house are shown together, then the next house, and so on.
-      </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Filter by Event</label>
-          <select id="adminViewEvent" onchange="onAdminViewEventChange()">
-            <option value="">— All Events —</option>
-            ${allEvents.map(e => `<option value="${e.id}">${esc(e.event_name)} — ${esc(getDayLabel(e.event_date))}${e.event_date ? ' ('+e.event_date+')' : ''}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="printAdminParticipantList()">🖨️ Print List</button>
-        <button class="btn btn-secondary" onclick="loadAdminRegisteredList()">🔄 Refresh</button>
-      </div>
-      <div id="adminRegisteredList" style="margin-top:16px;">Loading…</div>
+      <h3>📊 Recently Registered (Admin View)</h3>
+      <div class="alert alert-info">To view participants publicly, use the <strong>👥 Participants</strong> tab in the sidebar.</div>
+      <div id="adminRegisteredInlineList" style="margin-top:8px;">Loading…</div>
     </div>
   `;
+  setTimeout(() => loadAdminRegisteredInlineList(), 100);
+}
+
+async function loadAdminRegisteredInlineList() {
+  const el = document.getElementById('adminRegisteredInlineList');
+  if(!el) return;
+  try {
+    const { data, error } = await db.from('sports_participants').select('*').order('event_id', { ascending: false }).limit(60);
+    if(error) throw error;
+    const rows = data || [];
+    if(!rows.length) { el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">No participants registered yet.</div>`; return; }
+    el.innerHTML = `
+      <div style="margin-bottom:8px;font-size:12px;color:var(--muted);">Showing latest 60 registrations</div>
+      <div style="overflow-x:auto;">
+        <table class="events-table">
+          <thead><tr><th>#</th><th>Event</th><th>Adm No</th><th>Name</th><th>Class</th><th>House</th><th>Action</th></tr></thead>
+          <tbody>
+            ${rows.map((r, i) => `<tr>
+              <td>${i+1}</td>
+              <td>${esc(allEvents.find(e => e.id === parseInt(r.event_id, 10))?.event_name || '—')}</td>
+              <td>${esc(r.admission_no || '—')}</td>
+              <td><strong>${esc(r.student_name || '—')}</strong></td>
+              <td>${esc(r.class || '—')}-${esc(r.section || '')}</td>
+              <td style="color:${HOUSE_META[houseKey(r.house)]?.color || 'var(--text)'}">${esc(r.house || '—')}</td>
+              <td><button class="btn btn-danger btn-sm" onclick="deleteSportsParticipant(${r.id}, 'inline')">Delete</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div class="alert alert-error">Could not load: ${esc(e.message)}</div>`;
+  }
 }
 
 function initAdminParticipantsTab() {
@@ -1313,368 +1699,18 @@ async function registerAdminParticipants() {
   updateAdminSelectedPool();
   await loadAdminRegistered();
   filterAdminStudents();
+  await loadAdminRegisteredInlineList();
 }
 
-function onAdminViewEventChange() {
-  adminViewEventFilter = document.getElementById('adminViewEvent')?.value || '';
-  loadAdminRegisteredList();
-}
-
-async function loadAdminRegisteredList() {
-  const el = document.getElementById('adminRegisteredList');
-  if(!el) return;
-  try {
-    let query = db.from('sports_participants').select('*');
-    if(adminViewEventFilter) query = query.eq('event_id', parseInt(adminViewEventFilter, 10));
-    const { data, error } = await query;
-    if(error) throw error;
-    const rows = data || [];
-    _adminRegisteredCache = rows;
-    if(!rows.length) { el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);">No participants found.</div>`; return; }
-
-    const byEvent = {};
-    rows.forEach(r => {
-      const eid = String(r.event_id);
-      if(!byEvent[eid]) byEvent[eid] = { event_id: eid, rows: [] };
-      byEvent[eid].rows.push(r);
-    });
-    Object.values(byEvent).forEach(g => {
-      const ev = allEvents.find(e => String(e.id) === String(g.event_id));
-      g.event_name = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
-      g.event_date = ev?.event_date || '';
-    });
-
-    const groupKeys = Object.keys(byEvent).sort((a,b) => {
-      const ea = byEvent[a], eb = byEvent[b];
-      return compareAscending(ea.event_date, eb.event_date) || compareAscending(ea.event_name, eb.event_name);
-    });
-
-    let html = '';
-    groupKeys.forEach(key => {
-      const g = byEvent[key];
-      html += `<div style="margin-bottom:28px;">`;
-      html += `<div style="font-family:'Cinzel',serif;font-size:17px;color:var(--gold);font-weight:700;margin-bottom:4px;">${esc(g.event_name)}</div>`;
-      html += `<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">${esc(getDayLabel(g.event_date))}${g.event_date ? ' · ' + esc(formatDate(g.event_date)) : ''} · ${g.rows.length} participant(s)</div>`;
-
-      HOUSE_ORDER.forEach(house => {
-        const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
-        if(!houseRows.length) return;
-        const meta = HOUSE_META[houseKey(house)] || { color: '#999' };
-        html += `<div class="house-group">`;
-        html += `<div class="house-group-head" style="background:${meta.color}22;color:${meta.color};border-bottom:1px solid ${meta.color}55;">`;
-        html += `<span class="dot" style="background:${meta.color};"></span>${esc(house)}`;
-        html += `<span class="count">${houseRows.length} student(s)</span>`;
-        html += `</div>`;
-        html += `<div style="overflow-x:auto;">`;
-        html += `<table class="events-table"><thead><tr>
-          <th>#</th><th>Adm No</th><th>Roll No</th><th>Name</th><th>Class</th><th>Section</th><th>House</th><th>Action</th>
-        </tr></thead><tbody>`;
-        houseRows.forEach((r, i) => {
-          const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
-          html += `<tr>
-            <td>${i+1}</td>
-            <td>${esc(r.admission_no || '—')}</td>
-            <td>${esc(linked.roll_no || linked.roll || '—')}</td>
-            <td><strong>${esc(r.student_name || '—')}</strong></td>
-            <td>${esc(r.class || '—')}</td>
-            <td>${esc(r.section || '—')}</td>
-            <td style="color:${meta.color};font-weight:600;">${esc(r.house || '—')}</td>
-            <td><button class="btn btn-danger btn-sm" onclick="deleteSportsParticipant(${r.id})">Delete</button></td>
-          </tr>`;
-        });
-        html += `</tbody></table></div></div>`;
-      });
-
-      html += `</div>`;
-    });
-
-    el.innerHTML = html;
-  } catch(e) {
-    el.innerHTML = `<div class="alert alert-error">Could not load: ${esc(e.message)}</div>`;
-  }
-}
-
-function printAdminParticipantList() {
-  if(!_adminRegisteredCache.length) { showToast('No participants to print.', 'warning'); return; }
-  const byEvent = {};
-  _adminRegisteredCache.forEach(r => {
-    const eid = String(r.event_id);
-    if(!byEvent[eid]) byEvent[eid] = { rows: [] };
-    byEvent[eid].rows.push(r);
-  });
-  const groupKeys = Object.keys(byEvent).sort((a,b) => {
-    const ea = allEvents.find(e => String(e.id) === String(a));
-    const eb = allEvents.find(e => String(e.id) === String(b));
-    return compareAscending(ea?.event_date, eb?.event_date) || compareAscending(ea?.event_name, eb?.event_name);
-  });
-
-  let bodyHtml = '';
-  groupKeys.forEach(key => {
-    const g = byEvent[key];
-    const ev = allEvents.find(e => String(e.id) === String(key));
-    const evName = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
-    const evDate = ev?.event_date || '';
-    bodyHtml += `<div style="margin-top:22px; page-break-inside:avoid;">`;
-    bodyHtml += `<div style="font-family:Georgia,serif; font-size:16px; font-weight:bold;">${esc(evName)}</div>`;
-    bodyHtml += `<div style="font-size:11px; color:#555; margin-bottom:8px;">${esc(getDayLabel(evDate))}${evDate ? ' · ' + esc(formatDate(evDate)) : ''}</div>`;
-    HOUSE_ORDER.forEach(house => {
-      const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
-      if(!houseRows.length) return;
-      bodyHtml += `<div style="margin-top:10px; font-weight:bold; font-size:12px;">${esc(house)} — ${houseRows.length} student(s)</div>`;
-      bodyHtml += `<table style="width:100%;border-collapse:collapse;margin:6px 0 12px;">
-        <thead><tr>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:center;width:36px;">#</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Adm No</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Roll No</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Name</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Class</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Section</th>
-        </tr></thead><tbody>`;
-      houseRows.forEach((r, i) => {
-        const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
-        bodyHtml += `<tr>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;text-align:center;">${i+1}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.admission_no || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(linked.roll_no || linked.roll || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;"><strong>${esc(r.student_name || '—')}</strong></td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.class || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.section || '—')}</td>
-        </tr>`;
-      });
-      bodyHtml += `</tbody></table>`;
-    });
-    bodyHtml += `</div>`;
-  });
-
-  const win = window.open('', '_blank', 'width=1100,height=800');
-  if(!win) { showToast('Pop-up blocked. Allow pop-ups to print.', 'error'); return; }
-  win.document.write(`<html><head><title>Sports Day Participant List</title><style>
-    body { font-family: Arial, sans-serif; padding: 18px; color: #111; }
-    h1 { text-align: center; margin: 0; font-size: 22px; font-family: Georgia, serif; }
-    h2 { text-align: center; margin: 6px 0 16px; font-size: 13px; color: #555; font-weight: normal; }
-    @media print { body { padding: 10mm; } }
-  </style></head><body>
-    <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
-    <h2>Sports Day 2026 — Participant List (House-wise)</h2>
-    <div style="text-align:center; font-size:11px; color:#666; margin-bottom:12px;">Printed on ${esc(new Date().toLocaleString())}</div>
-    ${bodyHtml}
-  </body></html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => { try { win.print(); } catch(e){} }, 400);
-}
-
-async function deleteSportsParticipant(id) {
+async function deleteSportsParticipant(id, context = '') {
   if(!confirm('Delete this participant?')) return;
   await db.from('sports_participants').delete().eq('id', id);
   showToast('Participant deleted', 'success');
-  await loadAdminRegisteredList();
+  if(context === 'inline') await loadAdminRegisteredInlineList();
+  else await loadAdminRegisteredList();
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  ADMIN
-// ═══════════════════════════════════════════════════════════════
-function showAdminLogin() {
-  if(isAdminLoggedIn) { showAdminDashboard(); return; }
-  openModal('adminLoginModal');
-}
-
-async function verifyPasswordFromDatabase(role, name, pwd) {
-  if(!db) { showToast('DB not connected', 'error'); return null; }
-  try {
-    let q = db.from(AUTH_TABLE).select('*').eq(AUTH_ROLE_COLUMN, role);
-    if(role === 'admin') q = q.ilike(AUTH_NAME_COLUMN, 'admin');
-    const { data, error } = await q.limit(1);
-    if(error) throw error;
-    const rec = data?.[0];
-    return !!rec && String(rec[AUTH_PASSWORD_COLUMN] || '') === String(pwd || '');
-  } catch(e) { console.error(e); showToast('Verify error', 'error'); return null; }
-}
-
-async function verifyAdminLogin() {
-  const pwd = document.getElementById('adminPassword').value;
-  const err = document.getElementById('adminLoginError');
-  const ok = await verifyPasswordFromDatabase('admin', 'admin', pwd);
-  if(ok === null) return;
-  if(ok) {
-    isAdminLoggedIn = true;
-    closeModal('adminLoginModal');
-    document.getElementById('adminPassword').value = '';
-    updateUserBadge();
-    showToast('Admin access granted', 'success');
-    showAdminDashboard();
-  } else {
-    err.textContent = 'Invalid password';
-    err.style.display = 'flex';
-    setTimeout(() => err.style.display = 'none', 3000);
-  }
-}
-
-function logout() {
-  isAdminLoggedIn = false;
-  updateUserBadge();
-  showPage('home', '🏆 Sports Day Championship');
-  showToast('Logged out', 'info');
-}
-
-function updateUserBadge() {
-  const b = document.getElementById('userBadge');
-  const n = document.getElementById('userBadgeName');
-  if(!b || !n) return;
-  if(isAdminLoggedIn) { b.classList.add('visible'); n.textContent = '👑 Admin'; }
-  else b.classList.remove('visible');
-}
-
-function showAdminDashboard() {
-  const page = document.getElementById('page-dynamic');
-  page.innerHTML = `
-    <div class="page-header">
-      <h1>⚙️ Admin Panel</h1>
-      <p>Events, results, and certificate template setup</p>
-    </div>
-    <div class="panel" style="padding:10px; display:flex; gap:8px; flex-wrap:wrap;">
-      <button class="btn btn-primary" id="tab-events" onclick="switchAdminTab('events')">📅 Events</button>
-      <button class="btn btn-secondary" id="tab-result" onclick="switchAdminTab('result')">🏆 Add Result</button>
-      <button class="btn btn-secondary" id="tab-manage" onclick="switchAdminTab('manage')">🗂️ Manage</button>
-      <button class="btn btn-secondary" id="tab-cert" onclick="switchAdminTab('cert')">🎓 Certificate Setup</button>
-    </div>
-    <div id="adminTabContent"></div>
-  `;
-  showPage('dynamic', '⚙️ Admin Panel');
-  switchAdminTab('events');
-}
-
-function switchAdminTab(tab) {
-  ['events','result','manage','cert'].forEach(t => {
-    const b = document.getElementById('tab-' + t);
-    if(b) b.className = t === tab ? 'btn btn-primary' : 'btn btn-secondary';
-  });
-  const c = document.getElementById('adminTabContent');
-  if(tab === 'events') c.innerHTML = renderAdminEventsTab();
-  if(tab === 'result') c.innerHTML = renderAdminResultTab();
-  if(tab === 'manage') c.innerHTML = renderAdminManageTab();
-  if(tab === 'cert')   { c.innerHTML = renderAdminCertificateSetupTab(); initCertDesigner(); }
-}
-
-// ─────────────── TAB 1: EVENTS ───────────────
-function renderAdminEventsTab() {
-  return `
-    <div class="panel">
-      <h3>➕ Add New Sports Event</h3>
-      <div class="form-grid">
-        <div class="form-group"><label>Event Name *</label><input id="evName" placeholder="e.g., 100m Sprint"></div>
-        <div class="form-group"><label>For Class</label><input id="evClass" placeholder="e.g., VI – VIII"></div>
-        <div class="form-group"><label>Date</label>
-          <select id="evDate">
-            <option value="">— Select Day —</option>
-            <option value="${SPORTS_DAY_1}">Day 1 — ${esc(formatDate(SPORTS_DAY_1))}</option>
-            <option value="${SPORTS_DAY_2}">Day 2 — ${esc(formatDate(SPORTS_DAY_2))}</option>
-          </select>
-        </div>
-        <div class="form-group"><label>Gender</label>
-          <select id="evGender"><option value="">All</option><option value="Boys">Boys</option><option value="Girls">Girls</option><option value="Mixed">Mixed</option></select>
-        </div>
-        <div class="form-group"><label>Category</label><input id="evCategory" placeholder="Track / Field / Team"></div>
-        <div class="form-group"><label>Participants per House</label><input id="evParticipants" placeholder="any / 5 / 3-8" value="any"></div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
-        <button class="btn btn-success" onclick="addSportsEvent()">+ Add Event</button>
-        <button class="btn btn-danger" onclick="clearAllSportsEvents()">✕ Clear All Events</button>
-      </div>
-    </div>
-    <div class="panel">
-      <h3>📋 All Sports Events — ${allEvents.length}</h3>
-      ${!allEvents.length ? '<div style="padding:20px;text-align:center;color:var(--muted);">No events yet.</div>' :
-        allEvents.map(e => `
-          <div class="event-card" style="margin-bottom:12px;">
-            <span class="tag ${hasResultForEvent(e.id) ? 'tag-completed' : e.status === 'suspended' ? 'tag-suspended' : 'tag-upcoming'}">
-              ${hasResultForEvent(e.id) ? 'Result Declared' : e.status === 'suspended' ? 'Suspended' : 'Active'}
-            </span>
-            <h3>${esc(e.event_name)}</h3>
-            <div class="meta">📚 ${esc(e.for_class || 'All')} · 📅 ${esc(formatDate(e.event_date))} · 👥 ${esc(e.participants || 'any')}</div>
-            ${e.gender ? `<div class="meta">👤 ${esc(e.gender)}</div>` : ''}
-            ${e.category ? `<div class="meta">🏷️ ${esc(e.category)}</div>` : ''}
-            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-primary btn-sm" onclick="changeSportsEventDate(${e.id})">📅 Change Date</button>
-              <button class="btn btn-secondary btn-sm" onclick="toggleSuspendSportsEvent(${e.id})">${e.status === 'suspended' ? 'Resume' : 'Suspend'}</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteSportsEvent(${e.id})">Delete Event</button>
-            </div>
-          </div>`).join('')}
-    </div>
-  `;
-}
-
-async function addSportsEvent() {
-  const name = document.getElementById('evName').value.trim();
-  if(!name) { showToast('Event name required', 'error'); return; }
-  const payload = {
-    event_name: name,
-    for_class: document.getElementById('evClass').value.trim(),
-    event_date: document.getElementById('evDate').value || null,
-    gender: document.getElementById('evGender').value,
-    category: document.getElementById('evCategory').value.trim(),
-    participants: document.getElementById('evParticipants').value.trim() || 'any',
-    status: 'active'
-  };
-  const { error } = await db.from('sports_events').insert([payload]);
-  if(error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Event added!', 'success');
-  await loadEvents();
-  switchAdminTab('events');
-}
-
-async function clearAllSportsEvents() {
-  if(!confirm('⚠️ Delete ALL sports events and their results?')) return;
-  await db.from('sports_results').delete().neq('id', 0);
-  await db.from('sports_participants').delete().neq('id', 0);
-  await db.from('sports_events').delete().neq('id', 0);
-  showToast('All sports data cleared', 'warning');
-  await loadEvents();
-  switchAdminTab('events');
-}
-
-async function toggleSuspendSportsEvent(id) {
-  const ev = allEvents.find(e => e.id === id);
-  const newStatus = ev.status === 'suspended' ? 'active' : 'suspended';
-  await db.from('sports_events').update({ status: newStatus }).eq('id', id);
-  showToast(`Event ${newStatus === 'suspended' ? 'suspended' : 'resumed'}`, 'info');
-  await loadEvents();
-  switchAdminTab('events');
-}
-
-async function changeSportsEventDate(id) {
-  const ev = allEvents.find(e => e.id === id);
-  if(!ev) return;
-  const choice = prompt(
-    `Change date for "${ev.event_name}"\n\nEnter 1 for Day 1 (${formatDate(SPORTS_DAY_1)})\nEnter 2 for Day 2 (${formatDate(SPORTS_DAY_2)})\nOr type a full date YYYY-MM-DD`,
-    ev.event_date === SPORTS_DAY_1 ? '1' : ev.event_date === SPORTS_DAY_2 ? '2' : (ev.event_date || '1')
-  );
-  if(choice === null) return;
-  const c = String(choice).trim();
-  let newDate = '';
-  if(c === '1') newDate = SPORTS_DAY_1;
-  else if(c === '2') newDate = SPORTS_DAY_2;
-  else if(/^\d{4}-\d{2}-\d{2}$/.test(c)) newDate = c;
-  else { showToast('Invalid. Use 1, 2, or YYYY-MM-DD', 'error'); return; }
-
-  const { error } = await db.from('sports_events').update({ event_date: newDate }).eq('id', id);
-  if(error) { showToast('Could not update date: ' + error.message, 'error'); return; }
-  showToast(`📅 Date updated to ${formatDate(newDate)}`, 'success');
-  await loadEvents();
-  switchAdminTab('events');
-}
-
-async function deleteSportsEvent(id) {
-  if(!confirm('Delete event and all its participants/results?')) return;
-  await db.from('sports_results').delete().eq('event_id', id);
-  await db.from('sports_participants').delete().eq('event_id', id);
-  await db.from('sports_events').delete().eq('id', id);
-  showToast('Event deleted', 'success');
-  await loadEvents();
-  switchAdminTab('events');
-}
-
-// ─────────────── TAB 2: ADD RESULT ───────────────
+// ─────────────── TAB 3: ADD RESULT ───────────────
 function renderAdminResultTab() {
   const eventsWithoutResult = allEvents.filter(e => !hasResultForEvent(e.id));
   return `
@@ -1864,7 +1900,7 @@ async function addSportsResult() {
   switchAdminTab('result');
 }
 
-// ─────────────── TAB 3: MANAGE ───────────────
+// ─────────────── TAB 4: MANAGE ───────────────
 function renderAdminManageTab() {
   return `
     <div class="panel">
@@ -1905,7 +1941,7 @@ async function clearSportsResult(id) {
   switchAdminTab('manage');
 }
 
-// ─────────────── TAB 4: CERTIFICATE SETUP (VISUAL DESIGNER) ───────────────
+// ─────────────── TAB 5: CERTIFICATE SETUP (VISUAL DESIGNER) ───────────────
 function renderAdminCertificateSetupTab() {
   const hasTemplate = !!certTemplateDataUrl;
   const fieldLabels = {
@@ -1980,7 +2016,6 @@ function initCertDesigner() {
   designerActiveField = 'name';
   renderDesignerFieldControls();
   updateDesignerFieldButtonStates();
-  // Attach mouse/touch drag handlers to window
   window.addEventListener('mousemove', onDesignerMouseMove);
   window.addEventListener('mouseup', onDesignerMouseUp);
   window.addEventListener('touchmove', onDesignerTouchMove, { passive: false });
@@ -2060,7 +2095,6 @@ function updateDesignerField(f, prop, value) {
   }
 }
 
-// ── DRAG HANDLING ──
 function startDrag(e, field) {
   e.preventDefault();
   e.stopPropagation();
@@ -2100,7 +2134,6 @@ function moveDesignerField(clientX, clientY) {
   certLayout[f].y = y;
   const el = document.getElementById('df-' + f);
   if(el) { el.style.left = x + '%'; el.style.top = y + '%'; }
-  // Update inputs if editing this field
   if(f === designerActiveField) {
     const inputs = document.querySelectorAll('#designerFieldControls input[type="number"]');
     if(inputs[0]) inputs[0].value = x;
@@ -2261,7 +2294,6 @@ function showResultsPointsWise() {
 async function showCertificateCenter() {
   const page = document.getElementById('page-dynamic');
   await loadResults();
-  // Refresh config from cloud (in case admin just updated from another device)
   await loadCertificateConfigFromCloud();
   const eventsWithResult = allEvents.filter(e => hasResultForEvent(e.id));
   page.innerHTML = `
@@ -2352,7 +2384,6 @@ function buildCertificateHtml(entry) {
     ? `<img src="${certTemplateDataUrl}" style="width:100%;display:block;" alt="Certificate">`
     : `<div style="width:100%;aspect-ratio:1200/850;background:linear-gradient(135deg,#fff9ec,#f4e8c8);border:6px double #bfa76a;"></div>`;
 
-  // Build field positions from certLayout
   const fieldText = {
     name: String(entry.student_name || '').toUpperCase(),
     class: entry.class || '',
