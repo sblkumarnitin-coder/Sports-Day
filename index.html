@@ -355,10 +355,23 @@
   .designer-field-btn:hover { background: rgba(45,212,191,0.10); }
   .designer-field-btn.active { background: linear-gradient(135deg, #2dd4bf, #818cf8); color: #07181c; border-color: transparent; }
 
-  .designer-coord {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-  }
+  .designer-coord { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .designer-coord .form-group label { font-size: 11px; }
+
+  /* Print-form inputs inside participant tables */
+  .pos-time-input {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; color: var(--text);
+    font-size: 12px; width: 100%; outline: none; min-width: 90px;
+  }
+  .pos-time-input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-dim); }
+
+  /* Merged Position/Time cell styling */
+  .pos-time-cell {
+    vertical-align: middle;
+    text-align: center;
+    background: rgba(45,212,191,0.04);
+  }
 
   @media (max-width: 768px) {
     .sidebar { transform: translateX(-100%); transition: transform 0.2s; }
@@ -419,11 +432,11 @@
     </div>
 
     <div class="page active" id="page-home">
-      <div class="page-header">
-        <h1>🏆 Sports Day Championship</h1>
-        <p>Bal Vidya Mandir, Sambhal — Inter-House Sports Day</p>
-      </div>
-      <div id="homeContent"></div>
+      <div class="section-title">📊 Points Wise Event List</div>
+      <div class="panel" id="homePointsWise"></div>
+
+      <div class="section-title" style="margin-top:36px;">🥇 Result of Last Uploaded Event</div>
+      <div id="homeLastResult"></div>
     </div>
 
     <div class="page" id="page-dynamic"></div>
@@ -506,6 +519,9 @@ let designerActiveField = 'name';
 let designerDragging = null;
 let designerCanvasRect = null;
 
+// Position & Time store: key = "event_id|house", value = { position, time }
+let _posTimeStore = {};
+
 function defaultHousePoints() {
   return { 'Ekta House': 0, 'Sankalp House': 0, 'Prayas House': 0, 'Vishwas House': 0 };
 }
@@ -524,7 +540,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  CERTIFICATE CLOUD LOAD/SAVE
+//  CERTIFICATE CLOUD
 // ═══════════════════════════════════════════════════════════════
 async function loadCertificateConfigFromCloud() {
   if(!db) return;
@@ -737,107 +753,7 @@ function isEventPassed(event) {
 // ═══════════════════════════════════════════════════════════════
 //  HOME PAGE
 // ═══════════════════════════════════════════════════════════════
-function renderHome() { renderHomeDayWise(); }
-
-function renderHomeDayWise() {
-  const el = document.getElementById('homeContent');
-  if(!el) return;
-
-  const day1Events = allEvents.filter(e => e.event_date === SPORTS_DAY_1);
-  const day2Events = allEvents.filter(e => e.event_date === SPORTS_DAY_2);
-  const otherEvents = allEvents.filter(e => e.event_date && e.event_date !== SPORTS_DAY_1 && e.event_date !== SPORTS_DAY_2);
-
-  const renderDayBlock = (dayNum, dateStr, events) => {
-    if(!events.length && (dayNum === 1 || dayNum === 2)) {
-      return `
-        <div class="day-block">
-          <div class="day-head">
-            <div class="day-badge">Day ${dayNum}</div>
-            <div class="day-info">
-              <div class="day-title">Sports Day — Day ${dayNum}</div>
-              <div class="day-date">${esc(formatDate(dateStr))}</div>
-            </div>
-            <div class="day-count">0 events</div>
-          </div>
-          <div class="panel" style="text-align:center;color:var(--muted);padding:30px;">No events scheduled yet.</div>
-        </div>`;
-    }
-    if(!events.length) return '';
-    const cards = events.map(e => {
-      const status = e.status === 'suspended' ? 'Suspended'
-                    : hasResultForEvent(e.id) ? 'Result Declared'
-                    : isEventPassed(e) ? 'Completed'
-                    : 'Upcoming';
-      const tagCls = status === 'Suspended' ? 'tag-suspended'
-                    : (status === 'Completed' || status === 'Result Declared') ? 'tag-completed'
-                    : 'tag-upcoming';
-      let resultHtml = '';
-      if(hasResultForEvent(e.id)) {
-        const r = allResults.find(x => parseInt(x.event_id, 10) === e.id);
-        if(r) {
-          const f = parseHousePositionValue(r.first_place).join(', ');
-          const s = parseHousePositionValue(r.second_place).join(', ');
-          const t = parseHousePositionValue(r.third_place).join(', ');
-          const fo = parseHousePositionValue(r.fourth_place).join(', ');
-          resultHtml = `
-            <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
-              <div class="meta" style="color:var(--gold);font-weight:600;">🏆 Result Declared</div>
-              <div class="meta">🥇 ${esc(f || '—')}</div>
-              <div class="meta">🥈 ${esc(s || '—')}</div>
-              <div class="meta">🥉 ${esc(t || '—')}</div>
-              <div class="meta">4️⃣ ${esc(fo || '—')}</div>
-            </div>`;
-        }
-      }
-      return `<div class="event-card">
-        <span class="tag ${tagCls}">${status}</span>
-        <h3>${esc(e.event_name)}</h3>
-        <div class="meta">📚 ${esc(e.for_class || 'All classes')}</div>
-        <div class="meta">📅 ${esc(formatDate(e.event_date))}</div>
-        <div class="meta">👥 ${esc(e.participants || 'Any')} participant(s)</div>
-        ${e.gender ? `<div class="meta">👤 ${esc(e.gender)}</div>` : ''}
-        ${e.category ? `<div class="meta">🏷️ ${esc(e.category)}</div>` : ''}
-        ${resultHtml}
-      </div>`;
-    }).join('');
-
-    return `
-      <div class="day-block">
-        <div class="day-head">
-          <div class="day-badge">Day ${dayNum}</div>
-          <div class="day-info">
-            <div class="day-title">Sports Day — Day ${dayNum}</div>
-            <div class="day-date">${esc(formatDate(dateStr))}</div>
-          </div>
-          <div class="day-count">${events.length} event(s)</div>
-        </div>
-        <div class="events-grid">${cards}</div>
-      </div>`;
-  };
-
-  el.innerHTML = `
-    ${renderDayBlock(1, SPORTS_DAY_1, day1Events)}
-    ${renderDayBlock(2, SPORTS_DAY_2, day2Events)}
-    ${otherEvents.length ? `
-      <div class="day-block">
-        <div class="day-head">
-          <div class="day-badge">+</div>
-          <div class="day-info">
-            <div class="day-title">Other Events</div>
-            <div class="day-date">Events on other dates</div>
-          </div>
-          <div class="day-count">${otherEvents.length} event(s)</div>
-        </div>
-        <div class="events-grid">${otherEvents.map(e => `<div class="event-card"><h3>${esc(e.event_name)}</h3><div class="meta">📅 ${esc(e.event_date || 'TBD')}</div></div>`).join('')}</div>
-      </div>` : ''}
-
-    <div class="section-title" style="margin-top:36px;">📊 Points Wise Event List</div>
-    <div class="panel" id="homePointsWise"></div>
-
-    <div class="section-title" style="margin-top:36px;">🥇 Result of Last Uploaded Event</div>
-    <div id="homeLastResult"></div>
-  `;
-
+function renderHome() {
   renderHomePointsWise();
   renderHomeLastResult();
 }
@@ -937,13 +853,21 @@ async function renderHomeLastResult() {
     </div>`;
   }).join('');
 
-  const participantRows = sortStudentsAscending(participants).map((p, i) => {
+  const sortedParticipants = sortStudentsAscending(participants);
+  const participantRows = sortedParticipants.map((p, i) => {
     let declared = '—';
+    let place = '';
     const house = canonicalHouseName(p.house);
-    if(parseHousePositionValue(last.first_place).includes(house)) declared = '🥇 First Place';
-    else if(parseHousePositionValue(last.second_place).includes(house)) declared = '🥈 Second Place';
-    else if(parseHousePositionValue(last.third_place).includes(house)) declared = '🥉 Third Place';
-    else if(parseHousePositionValue(last.fourth_place).includes(house)) declared = '4️⃣ Fourth Place';
+    if(parseHousePositionValue(last.first_place).includes(house)) { declared = '🥇 First Place'; place = 'First Place'; }
+    else if(parseHousePositionValue(last.second_place).includes(house)) { declared = '🥈 Second Place'; place = 'Second Place'; }
+    else if(parseHousePositionValue(last.third_place).includes(house)) { declared = '🥉 Third Place'; place = 'Third Place'; }
+    else if(parseHousePositionValue(last.fourth_place).includes(house)) { declared = '4️⃣ Fourth Place'; place = 'Fourth Place'; }
+
+    const canCert = !!place && place !== 'Fourth Place';
+    const certBtn = canCert
+      ? `<button class="btn btn-primary btn-sm" onclick="openCertForStudent(${i})">🎓 E-Certificate</button>`
+      : `<button class="btn btn-secondary btn-sm" disabled title="Only First/Second/Third place get certificates">🎓 N/A</button>`;
+
     return `<tr>
       <td>${i+1}</td>
       <td>${esc(p.admission_no || '—')}</td>
@@ -952,12 +876,13 @@ async function renderHomeLastResult() {
       <td>${esc(p.section || '—')}</td>
       <td style="color:${HOUSE_META[houseKey(p.house)]?.color || 'var(--text)'}">${esc(p.house || '—')}</td>
       <td>${declared}</td>
+      <td>${certBtn}</td>
     </tr>`;
   }).join('');
 
   el.innerHTML = `
-    <div class="last-result">
-      <div class="last-result-title">🏁 ${esc(last.event_name || 'Sports Event')}</div>
+    <div class="last-result" id="lastResultCard">
+      <div class="last-result-title">${esc(last.event_name || 'Sports Event')}</div>
       <div class="last-result-sub">
         ${event?.event_date ? '📅 ' + esc(formatDate(event.event_date)) : ''}
         ${event?.for_class ? ' · 📚 Class ' + esc(event.for_class) : ''}
@@ -970,13 +895,97 @@ async function renderHomeLastResult() {
           <div style="overflow-x:auto;">
             <table class="events-table">
               <thead>
-                <tr><th>#</th><th>Admission No</th><th>Name</th><th>Class</th><th>Section</th><th>House</th><th>Result</th></tr>
+                <tr><th>#</th><th>Admission No</th><th>Name</th><th>Class</th><th>Section</th><th>House</th><th>Result</th><th>Certificate</th></tr>
               </thead>
               <tbody>${participantRows}</tbody>
             </table>
           </div>
+          <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="showCertificateCenterForEvent(${eid})">🎓 Open All E-Certificates</button>
+            <button class="btn btn-secondary" onclick="printLastResultCard(${eid})">🖨️ Print This Result</button>
+          </div>
         </div>` : ''}
     </div>`;
+
+  window.__lastResultCertEntries = sortedParticipants.map(p => {
+    const house = canonicalHouseName(p.house);
+    let place = '';
+    if(parseHousePositionValue(last.first_place).includes(house)) place = 'First Place';
+    else if(parseHousePositionValue(last.second_place).includes(house)) place = 'Second Place';
+    else if(parseHousePositionValue(last.third_place).includes(house)) place = 'Third Place';
+    else if(parseHousePositionValue(last.fourth_place).includes(house)) place = 'Fourth Place';
+    return {
+      student_name: p.student_name, admission_no: p.admission_no,
+      class: p.class, section: p.section, house: p.house,
+      place: place,
+      event_name: last.event_name,
+      event_date: event?.event_date || ''
+    };
+  });
+}
+
+function openCertForStudent(index) {
+  const entry = window.__lastResultCertEntries?.[index];
+  if(!entry) { showToast('Student data missing', 'error'); return; }
+  if(!entry.place || entry.place === 'Fourth Place') {
+    showToast('Only First/Second/Third place students get certificates', 'warning');
+    return;
+  }
+  const win = window.open('', '_blank', 'width=900,height=1100');
+  if(!win) { showToast('Pop-up blocked', 'error'); return; }
+  win.document.open();
+  win.document.write(buildCertificateHtml(entry));
+  win.document.close();
+  win.focus();
+}
+
+function printLastResultCard(eventId) {
+  const card = document.getElementById('lastResultCard');
+  if(!card) { showToast('Nothing to print', 'warning'); return; }
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll('button').forEach(b => b.remove());
+
+  const event = allEvents.find(e => e.id === eventId);
+  const eventName = event ? event.event_name : 'Sports Event';
+
+  const win = window.open('', '_blank', 'width=1100,height=800');
+  if(!win) { showToast('Pop-up blocked', 'error'); return; }
+  win.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${esc(eventName)} — Result</title><style>
+    @page { size: A4 portrait; margin: 10mm; }
+    html, body { margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; padding: 0; color: #111; }
+    h1 { text-align: center; margin: 0 0 4px; font-size: 22px; font-family: Georgia, serif; }
+    h2 { text-align: center; margin: 0 0 6px; font-size: 13px; color: #333; font-weight: normal; }
+    .printed-note { text-align: center; font-size: 10px; color: #666; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 18px; page-break-inside: auto; }
+    th, td { border: 1px solid #777; padding: 6px 8px; font-size: 12px; text-align: left; }
+    th { background: #f1eadb; font-weight: bold; }
+    tr { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+    .place-row { display:flex; gap:12px; padding:8px 12px; border:1px solid #999; border-radius:8px; margin:6px 0; align-items:center; }
+    .place-medal { font-size:20px; }
+    .place-label { font-size:11px; color:#555; text-transform:uppercase; }
+    .place-house { font-weight:bold; font-size:15px; }
+    .place-pts { margin-left:auto; font-weight:bold; }
+  </style></head><body>
+    <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
+    <h2>Sports Day 2026 — Event Result</h2>
+    <div class="printed-note">Printed on ${esc(new Date().toLocaleString())}</div>
+    ${clone.innerHTML}
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch(e){} }, 400);
+}
+
+function showCertificateCenterForEvent(eventId) {
+  showCertificateCenter().then(() => {
+    setTimeout(() => {
+      const sel = document.getElementById('certEventSelect');
+      if(sel) { sel.value = String(eventId); renderCertificateCards(); }
+    }, 120);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1070,6 +1079,7 @@ function showEventsByFilter(filter) {
 
 // ═══════════════════════════════════════════════════════════════
 //  PUBLIC PARTICIPANTS — VIEW ONLY
+//  Position & Time: one merged cell per house
 // ═══════════════════════════════════════════════════════════════
 function showParticipantsViewOnly() {
   const page = document.getElementById('page-dynamic');
@@ -1081,7 +1091,7 @@ function showParticipantsViewOnly() {
     <div class="panel">
       <h3>📋 Registered Participants</h3>
       <div class="alert alert-info">
-        All participants of one house are shown together, then the next house, and so on.
+        All participants of one house are shown together. Fill in the <strong>Position</strong> and <strong>Time</strong> fields for each house, then click <strong>🖨️ Print List</strong> to print or save as PDF.
       </div>
       <div class="form-grid">
         <div class="form-group">
@@ -1094,6 +1104,7 @@ function showParticipantsViewOnly() {
       </div>
       <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="printAdminParticipantList()">🖨️ Print List</button>
+        <button class="btn btn-info" onclick="printHouseWiseList()">🖨️ Print House List</button>
         <button class="btn btn-secondary" onclick="loadAdminRegisteredList()">🔄 Refresh</button>
       </div>
       <div id="adminRegisteredList" style="margin-top:16px;">Loading…</div>
@@ -1131,6 +1142,7 @@ async function loadAdminRegisteredList() {
       const ev = allEvents.find(e => String(e.id) === String(g.event_id));
       g.event_name = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
       g.event_date = ev?.event_date || '';
+      g.for_class = ev?.for_class || '';
     });
 
     const groupKeys = Object.keys(byEvent).sort((a,b) => {
@@ -1141,22 +1153,26 @@ async function loadAdminRegisteredList() {
     let html = '';
     groupKeys.forEach(key => {
       const g = byEvent[key];
-      html += `<div style="margin-bottom:28px;">`;
-      html += `<div style="font-family:'Cinzel',serif;font-size:17px;color:var(--gold);font-weight:700;margin-bottom:4px;">${esc(g.event_name)}</div>`;
-      html += `<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">${esc(getDayLabel(g.event_date))}${g.event_date ? ' · ' + esc(formatDate(g.event_date)) : ''} · ${g.rows.length} participant(s)</div>`;
+      const titleStr = g.for_class ? `${g.event_name} (${g.for_class})` : g.event_name;
+      html += `<div style="margin-bottom:32px;">`;
+      html += `<div style="font-family:'Cinzel',serif;font-size:18px;color:var(--gold);font-weight:700;margin-bottom:4px;">${esc(titleStr)}</div>`;
+      html += `<div style="font-size:12px;color:var(--muted);margin-bottom:16px;">${esc(getDayLabel(g.event_date))}${g.event_date ? ' · ' + esc(formatDate(g.event_date)) : ''} · ${g.rows.length} participant(s)</div>`;
 
       HOUSE_ORDER.forEach(house => {
         const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
         if(!houseRows.length) return;
         const meta = HOUSE_META[houseKey(house)] || { color: '#999' };
+        const ptKey = `${g.event_id}|${house}`;
+        const stored = _posTimeStore[ptKey] || { position: '', time: '' };
+
         html += `<div class="house-group">`;
         html += `<div class="house-group-head" style="background:${meta.color}22;color:${meta.color};border-bottom:1px solid ${meta.color}55;">`;
-        html += `<span class="dot" style="background:${meta.color};"></span>${esc(house)}`;
-        html += `<span class="count">${houseRows.length} student(s)</span>`;
+        html += `<span class="dot" style="background:${meta.color};"></span>${esc(house)} — ${houseRows.length} student(s)`;
         html += `</div>`;
         html += `<div style="overflow-x:auto;">`;
         html += `<table class="events-table"><thead><tr>
           <th>#</th><th>Adm No</th><th>Roll No</th><th>Name</th><th>Class</th><th>Section</th><th>House</th>
+          <th style="min-width:130px;">Position</th><th style="min-width:130px;">Time</th>
         </tr></thead><tbody>`;
         houseRows.forEach((r, i) => {
           const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
@@ -1167,8 +1183,18 @@ async function loadAdminRegisteredList() {
             <td><strong>${esc(r.student_name || '—')}</strong></td>
             <td>${esc(r.class || '—')}</td>
             <td>${esc(r.section || '—')}</td>
-            <td style="color:${meta.color};font-weight:600;">${esc(r.house || '—')}</td>
-          </tr>`;
+            <td style="color:${meta.color};font-weight:600;">${esc(r.house || '—')}</td>`;
+          // First row: add merged cells spanning all rows for Position + Time
+          if(i === 0) {
+            const rowspan = houseRows.length;
+            html += `<td class="pos-time-cell" rowspan="${rowspan}">
+              <input type="text" class="pos-time-input" data-pt-key="${esc(ptKey)}" data-pt-field="position" value="${esc(stored.position)}" placeholder="e.g., 1st" oninput="onPosTimeInput(this)">
+            </td>`;
+            html += `<td class="pos-time-cell" rowspan="${rowspan}">
+              <input type="text" class="pos-time-input" data-pt-key="${esc(ptKey)}" data-pt-field="time" value="${esc(stored.time)}" placeholder="e.g., 1:24.56" oninput="onPosTimeInput(this)">
+            </td>`;
+          }
+          html += `</tr>`;
         });
         html += `</tbody></table></div></div>`;
       });
@@ -1180,6 +1206,14 @@ async function loadAdminRegisteredList() {
   } catch(e) {
     el.innerHTML = `<div class="alert alert-error">Could not load: ${esc(e.message)}</div>`;
   }
+}
+
+function onPosTimeInput(input) {
+  const key = input.getAttribute('data-pt-key');
+  const field = input.getAttribute('data-pt-field');
+  if(!key || !field) return;
+  if(!_posTimeStore[key]) _posTimeStore[key] = { position: '', time: '' };
+  _posTimeStore[key][field] = input.value;
 }
 
 function printAdminParticipantList() {
@@ -1202,51 +1236,192 @@ function printAdminParticipantList() {
     const ev = allEvents.find(e => String(e.id) === String(key));
     const evName = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
     const evDate = ev?.event_date || '';
-    bodyHtml += `<div style="margin-top:22px; page-break-inside:avoid;">`;
-    bodyHtml += `<div style="font-family:Georgia,serif; font-size:16px; font-weight:bold;">${esc(evName)}</div>`;
-    bodyHtml += `<div style="font-size:11px; color:#555; margin-bottom:8px;">${esc(getDayLabel(evDate))}${evDate ? ' · ' + esc(formatDate(evDate)) : ''}</div>`;
+    const forClass = ev?.for_class || '';
+    const titleStr = forClass ? `${evName} (${forClass})` : evName;
+
+    bodyHtml += `<div style="margin-top:20px;">`;
+    bodyHtml += `<div style="font-family:Georgia,serif; font-size:16px; font-weight:bold; margin-bottom:2px; page-break-after:avoid;">${esc(titleStr)}</div>`;
+    bodyHtml += `<div style="font-size:12px; color:#444; margin-bottom:10px; page-break-after:avoid;">${esc(getDayLabel(evDate))}${evDate ? ' · ' + esc(formatDate(evDate)) : ''}</div>`;
+
     HOUSE_ORDER.forEach(house => {
       const houseRows = sortStudentsAscending(g.rows.filter(r => canonicalHouseName(r.house) === house));
       if(!houseRows.length) return;
-      bodyHtml += `<div style="margin-top:10px; font-weight:bold; font-size:12px;">${esc(house)} — ${houseRows.length} student(s)</div>`;
+      const ptKey = `${key}|${house}`;
+      const stored = _posTimeStore[ptKey] || { position: '', time: '' };
+
+      bodyHtml += `<div style="margin-top:12px; font-weight:bold; font-size:13px; page-break-after:avoid;">${esc(house)} — ${houseRows.length} student(s)</div>`;
       bodyHtml += `<table style="width:100%;border-collapse:collapse;margin:6px 0 12px;">
         <thead><tr>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:center;width:36px;">#</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Adm No</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Roll No</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Name</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Class</th>
-          <th style="border:1px solid #777;padding:5px 7px;font-size:11px;background:#f1eadb;text-align:left;">Section</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:center;width:34px;font-weight:bold;">#</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Adm No</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Roll No</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Name</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Class</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Section</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;min-width:70px;">Position</th>
+          <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;min-width:70px;">Time</th>
         </tr></thead><tbody>`;
       houseRows.forEach((r, i) => {
         const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
         bodyHtml += `<tr>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;text-align:center;">${i+1}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.admission_no || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(linked.roll_no || linked.roll || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;"><strong>${esc(r.student_name || '—')}</strong></td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.class || '—')}</td>
-          <td style="border:1px solid #777;padding:5px 7px;font-size:11px;">${esc(r.section || '—')}</td>
-        </tr>`;
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;text-align:center;">${i+1}</td>
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.admission_no || '—')}</td>
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(linked.roll_no || linked.roll || '—')}</td>
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;font-weight:bold;">${esc(r.student_name || '—')}</td>
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.class || '—')}</td>
+          <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.section || '—')}</td>`;
+        if(i === 0) {
+          const rowspan = houseRows.length;
+          bodyHtml += `<td rowspan="${rowspan}" style="border:1px solid #555;padding:5px 7px;font-size:11px;vertical-align:middle;text-align:center;">${esc(stored.position || '')}</td>`;
+          bodyHtml += `<td rowspan="${rowspan}" style="border:1px solid #555;padding:5px 7px;font-size:11px;vertical-align:middle;text-align:center;">${esc(stored.time || '')}</td>`;
+        }
+        bodyHtml += `</tr>`;
       });
       bodyHtml += `</tbody></table>`;
     });
+
     bodyHtml += `</div>`;
   });
 
   const win = window.open('', '_blank', 'width=1100,height=800');
   if(!win) { showToast('Pop-up blocked. Allow pop-ups to print.', 'error'); return; }
-  win.document.write(`<html><head><title>Sports Day Participant List</title><style>
-    body { font-family: Arial, sans-serif; padding: 18px; color: #111; }
-    h1 { text-align: center; margin: 0; font-size: 22px; font-family: Georgia, serif; }
-    h2 { text-align: center; margin: 6px 0 16px; font-size: 13px; color: #555; font-weight: normal; }
-    @media print { body { padding: 10mm; } }
-  </style></head><body>
-    <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
-    <h2>Sports Day 2026 — Participant List (House-wise)</h2>
-    <div style="text-align:center; font-size:11px; color:#666; margin-bottom:12px;">Printed on ${esc(new Date().toLocaleString())}</div>
-    ${bodyHtml}
-  </body></html>`);
+  win.document.write(`<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>Sports Day Participant List</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; padding: 0; color: #111; }
+  h1 { text-align: center; margin: 0 0 4px; font-size: 22px; font-family: Georgia, serif; }
+  h2 { text-align: center; margin: 0 0 6px; font-size: 13px; color: #333; font-weight: normal; }
+  .printed-note { text-align: center; font-size: 10px; color: #666; margin-bottom: 12px; }
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  @media print {
+    body { margin: 0; }
+  }
+</style>
+</head><body>
+  <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
+  <h2>Sports Day 2026 — Participant List (House-wise)</h2>
+  <div class="printed-note">Printed on ${esc(new Date().toLocaleString())}</div>
+  ${bodyHtml}
+</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch(e){} }, 400);
+}
+
+// ─────────── NEW: Print House-Wise List (single house) ───────────
+function printHouseWiseList() {
+  if(!_adminRegisteredCache.length) { showToast('No participants loaded yet. Please refresh first.', 'warning'); return; }
+  // Prompt for house
+  const choice = prompt(
+    `Enter the house you want to print:\n\n1 — Ekta House\n2 — Sankalp House\n3 — Prayas House\n4 — Vishwas House\n\nType 1, 2, 3, or 4:`,
+    '1'
+  );
+  if(choice === null) return;
+  const houseIndexMap = { '1': 'Ekta House', '2': 'Sankalp House', '3': 'Prayas House', '4': 'Vishwas House' };
+  const chosenHouse = houseIndexMap[String(choice).trim()];
+  if(!chosenHouse) { showToast('Invalid choice. Use 1, 2, 3, or 4.', 'error'); return; }
+
+  // Filter participants for this house
+  const houseParticipants = _adminRegisteredCache.filter(r => canonicalHouseName(r.house) === chosenHouse);
+  if(!houseParticipants.length) { showToast(`No participants found for ${chosenHouse}.`, 'warning'); return; }
+
+  // Group by event
+  const byEvent = {};
+  houseParticipants.forEach(r => {
+    const eid = String(r.event_id);
+    if(!byEvent[eid]) byEvent[eid] = { rows: [] };
+    byEvent[eid].rows.push(r);
+  });
+  const groupKeys = Object.keys(byEvent).sort((a,b) => {
+    const ea = allEvents.find(e => String(e.id) === String(a));
+    const eb = allEvents.find(e => String(e.id) === String(b));
+    return compareAscending(ea?.event_date, eb?.event_date) || compareAscending(ea?.event_name, eb?.event_name);
+  });
+
+  let bodyHtml = '';
+  groupKeys.forEach(key => {
+    const g = byEvent[key];
+    const ev = allEvents.find(e => String(e.id) === String(key));
+    const evName = ev ? ev.event_name : (g.rows[0]?.event_name || 'Unknown Event');
+    const evDate = ev?.event_date || '';
+    const forClass = ev?.for_class || '';
+    const titleStr = forClass ? `${evName} (${forClass})` : evName;
+
+    const ptKey = `${key}|${chosenHouse}`;
+    const stored = _posTimeStore[ptKey] || { position: '', time: '' };
+
+    bodyHtml += `<div style="margin-top:18px;">`;
+    bodyHtml += `<div style="font-family:Georgia,serif; font-size:16px; font-weight:bold; margin-bottom:2px; page-break-after:avoid;">${esc(titleStr)}</div>`;
+    bodyHtml += `<div style="font-size:12px; color:#444; margin-bottom:10px; page-break-after:avoid;">${esc(getDayLabel(evDate))}${evDate ? ' · ' + esc(formatDate(evDate)) : ''}</div>`;
+
+    const houseRows = sortStudentsAscending(g.rows);
+    bodyHtml += `<table style="width:100%;border-collapse:collapse;margin:6px 0 12px;">
+      <thead><tr>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:center;width:34px;font-weight:bold;">#</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Adm No</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Roll No</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Name</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Class</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;">Section</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;min-width:70px;">Position</th>
+        <th style="border:1px solid #555;padding:5px 7px;font-size:11px;background:#f5f5f5;text-align:left;font-weight:bold;min-width:70px;">Time</th>
+      </tr></thead><tbody>`;
+    houseRows.forEach((r, i) => {
+      const linked = allStudents.find(s => admissionLookupKey(s.admission_no) === admissionLookupKey(r.admission_no)) || {};
+      bodyHtml += `<tr>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;text-align:center;">${i+1}</td>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.admission_no || '—')}</td>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(linked.roll_no || linked.roll || '—')}</td>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;font-weight:bold;">${esc(r.student_name || '—')}</td>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.class || '—')}</td>
+        <td style="border:1px solid #555;padding:5px 7px;font-size:11px;">${esc(r.section || '—')}</td>`;
+      if(i === 0) {
+        const rowspan = houseRows.length;
+        bodyHtml += `<td rowspan="${rowspan}" style="border:1px solid #555;padding:5px 7px;font-size:11px;vertical-align:middle;text-align:center;">${esc(stored.position || '')}</td>`;
+        bodyHtml += `<td rowspan="${rowspan}" style="border:1px solid #555;padding:5px 7px;font-size:11px;vertical-align:middle;text-align:center;">${esc(stored.time || '')}</td>`;
+      }
+      bodyHtml += `</tr>`;
+    });
+    bodyHtml += `</tbody></table>`;
+    bodyHtml += `</div>`;
+  });
+
+  const win = window.open('', '_blank', 'width=1100,height=800');
+  if(!win) { showToast('Pop-up blocked. Allow pop-ups to print.', 'error'); return; }
+  win.document.write(`<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>${esc(chosenHouse)} — Participant List</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; padding: 0; color: #111; }
+  h1 { text-align: center; margin: 0 0 4px; font-size: 22px; font-family: Georgia, serif; }
+  h2 { text-align: center; margin: 0 0 6px; font-size: 13px; color: #333; font-weight: normal; }
+  .printed-note { text-align: center; font-size: 10px; color: #666; margin-bottom: 12px; }
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  @media print {
+    body { margin: 0; }
+  }
+</style>
+</head><body>
+  <h1>BAL VIDYA MANDIR, SAMBHAL</h1>
+  <h2>Sports Day 2026 — ${esc(chosenHouse)} — Participant List</h2>
+  <div class="printed-note">Printed on ${esc(new Date().toLocaleString())}</div>
+  ${bodyHtml}
+</body></html>`);
   win.document.close();
   win.focus();
   setTimeout(() => { try { win.print(); } catch(e){} }, 400);
@@ -1434,14 +1609,9 @@ async function renameSportsEvent(id) {
   const trimmed = String(newName).trim();
   if(!trimmed) { showToast('Name cannot be empty', 'error'); return; }
   if(trimmed === ev.event_name) { showToast('Name unchanged', 'info'); return; }
-
   const { error } = await db.from('sports_events').update({ event_name: trimmed }).eq('id', id);
   if(error) { showToast('Could not rename: ' + error.message, 'error'); return; }
-
-  // Also update the linked result (if any) so certificates use the new name
-  if(hasResultForEvent(id)) {
-    await db.from('sports_results').update({ event_name: trimmed }).eq('event_id', id);
-  }
+  if(hasResultForEvent(id)) await db.from('sports_results').update({ event_name: trimmed }).eq('event_id', id);
   showToast(`✅ Renamed to "${trimmed}"`, 'success');
   await loadEvents();
   switchAdminTab('events');
@@ -1461,7 +1631,6 @@ async function changeSportsEventDate(id) {
   else if(c === '2') newDate = SPORTS_DAY_2;
   else if(/^\d{4}-\d{2}-\d{2}$/.test(c)) newDate = c;
   else { showToast('Invalid. Use 1, 2, or YYYY-MM-DD', 'error'); return; }
-
   const { error } = await db.from('sports_events').update({ event_date: newDate }).eq('id', id);
   if(error) { showToast('Could not update date: ' + error.message, 'error'); return; }
   showToast(`📅 Date updated to ${formatDate(newDate)}`, 'success');
@@ -1479,15 +1648,13 @@ async function deleteSportsEvent(id) {
   switchAdminTab('events');
 }
 
-// ─────────────── TAB 2: ADD PARTICIPANTS (ADMIN ONLY) ───────────────
+// ─────────────── TAB 2: ADD PARTICIPANTS ───────────────
 function renderAdminAddParticipantsTab() {
   const eligibleEvents = allEvents.filter(e => e.status !== 'suspended');
   return `
     <div class="panel">
       <h3>➕ Add Participants to a Sports Event</h3>
-      <div class="alert alert-info">
-        Select an event, then choose the house, then select the students from that house to register.
-      </div>
+      <div class="alert alert-info">Select an event, then choose the house, then select the students from that house to register.</div>
       <div class="form-grid">
         <div class="form-group">
           <label>Event</label>
@@ -1506,7 +1673,6 @@ function renderAdminAddParticipantsTab() {
       </div>
       <div id="adminPartEventInfo"></div>
     </div>
-
     <div class="panel" id="adminPartStudentPanel" style="display:none;">
       <h3>🎯 Select Students from <span id="adminPartHouseLabel">—</span></h3>
       <div class="form-group">
@@ -1523,10 +1689,8 @@ function renderAdminAddParticipantsTab() {
       </div>
       <div id="adminPartStatus"></div>
     </div>
-
     <div class="panel">
       <h3>📊 Recently Registered (Admin View)</h3>
-      <div class="alert alert-info">To view participants publicly, use the <strong>👥 Participants</strong> tab in the sidebar.</div>
       <div id="adminRegisteredInlineList" style="margin-top:8px;">Loading…</div>
     </div>
   `;
@@ -1707,7 +1871,6 @@ async function deleteSportsParticipant(id, context = '') {
   await db.from('sports_participants').delete().eq('id', id);
   showToast('Participant deleted', 'success');
   if(context === 'inline') await loadAdminRegisteredInlineList();
-  else await loadAdminRegisteredList();
 }
 
 // ─────────────── TAB 3: ADD RESULT ───────────────
@@ -1718,7 +1881,7 @@ function renderAdminResultTab() {
       <h3>🏆 Add Result</h3>
       <div class="alert alert-info">
         Select the event, then type the house for First, Second, and Third place. The <strong>Fourth place is filled automatically</strong> with the remaining house.
-        Use shortcuts: <code>e</code>=Ekta, <code>s</code>=Sankalp, <code>p</code>=Prayas, <code>v</code>=Vishwas. Separate multiple houses for ties with a comma.
+        Use shortcuts: <code>e</code>=Ekta, <code>s</code>=Sankalp, <code>p</code>=Prayas, <code>v</code>=Vishwas.
       </div>
       <div class="form-grid">
         <div class="form-group">
@@ -1730,33 +1893,30 @@ function renderAdminResultTab() {
         </div>
       </div>
       ${!eventsWithoutResult.length ? `<div class="alert alert-warning" style="margin-top:16px;">All events already have results saved. Clear a result from the Manage tab to re-enter it.</div>` : ''}
-
       <div id="resultInputBlock" style="display:none; margin-top:20px;">
         <div class="form-grid">
           <div class="form-group">
             <label>🥇 First Place House *</label>
-            <input id="resFirst" placeholder="e / s / p / v (comma for tie)" oninput="applyHouseShortcutInput('resFirst'); updateResultPreview()" onblur="applyHouseShortcutInput('resFirst'); updateResultPreview()">
+            <input id="resFirst" placeholder="e / s / p / v" oninput="applyHouseShortcutInput('resFirst'); updateResultPreview()" onblur="applyHouseShortcutInput('resFirst'); updateResultPreview()">
           </div>
           <div class="form-group">
             <label>🥈 Second Place House *</label>
-            <input id="resSecond" placeholder="e / s / p / v (comma for tie)" oninput="applyHouseShortcutInput('resSecond'); updateResultPreview()" onblur="applyHouseShortcutInput('resSecond'); updateResultPreview()">
+            <input id="resSecond" placeholder="e / s / p / v" oninput="applyHouseShortcutInput('resSecond'); updateResultPreview()" onblur="applyHouseShortcutInput('resSecond'); updateResultPreview()">
           </div>
           <div class="form-group">
             <label>🥉 Third Place House *</label>
-            <input id="resThird" placeholder="e / s / p / v (comma for tie)" oninput="applyHouseShortcutInput('resThird'); updateResultPreview()" onblur="applyHouseShortcutInput('resThird'); updateResultPreview()">
+            <input id="resThird" placeholder="e / s / p / v" oninput="applyHouseShortcutInput('resThird'); updateResultPreview()" onblur="applyHouseShortcutInput('resThird'); updateResultPreview()">
           </div>
           <div class="form-group">
             <label>4️⃣ Fourth Place (auto)</label>
-            <input id="resFourth" readonly placeholder="Auto-calculated" style="opacity:0.75;">
+            <input id="resFourth" readonly placeholder="Auto" style="opacity:0.75;">
           </div>
         </div>
         <div class="form-group" style="margin-top:14px;">
           <label>Notes (optional)</label>
-          <input id="resNotes" placeholder="Any notes about this event">
+          <input id="resNotes" placeholder="Any notes">
         </div>
-        <div class="alert alert-info" style="margin-top:12px;">
-          <span>Points: 🥇 5 · 🥈 3 · 🥉 1 · 4️⃣ 0</span>
-        </div>
+        <div class="alert alert-info" style="margin-top:12px;">Points: 🥇 5 · 🥈 3 · 🥉 1 · 4️⃣ 0</div>
         <h3 style="margin-top:20px;">Live Preview</h3>
         <div id="resultPreview" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;"></div>
         <button class="btn btn-primary" style="margin-top:20px;" onclick="addSportsResult()">💾 Save Result</button>
@@ -1824,7 +1984,6 @@ function updateResultPreview() {
   const all = [...f, ...s, ...t];
   const fourth = HOUSE_ORDER.filter(h => !all.includes(h));
   if(fourthInput) fourthInput.value = fourth.length ? fourth.join(', ') : '—';
-
   const dup = all.find((h, i) => all.indexOf(h) !== i);
   const preview = document.getElementById('resultPreview');
   if(!preview) return;
@@ -1905,9 +2064,7 @@ function renderAdminManageTab() {
   return `
     <div class="panel">
       <h3>🗂️ Saved Results — Clear if needed</h3>
-      <div class="alert alert-info">
-        Use the Clear button to remove a saved result for an event. The event will then appear again in the Add Result tab so you can re-enter it.
-      </div>
+      <div class="alert alert-info">Use the Clear button to remove a saved result. The event will then appear again in the Add Result tab.</div>
       ${!allResults.length ? '<div style="padding:20px;text-align:center;color:var(--muted);">No saved results.</div>' :
         allResults.map(r => {
           const f = parseHousePositionValue(r.first_place).join(', ');
@@ -1933,7 +2090,7 @@ function renderAdminManageTab() {
 
 async function clearSportsResult(id) {
   const r = allResults.find(x => x.id === id);
-  if(!confirm(`Clear the result of "${r?.event_name || 'this event'}"? This cannot be undone.`)) return;
+  if(!confirm(`Clear the result of "${r?.event_name || 'this event'}"?`)) return;
   const { error } = await db.from('sports_results').delete().eq('id', id);
   if(error) { showToast('Clear failed: ' + error.message, 'error'); return; }
   showToast('✅ Result cleared', 'success');
@@ -1941,7 +2098,7 @@ async function clearSportsResult(id) {
   switchAdminTab('manage');
 }
 
-// ─────────────── TAB 5: CERTIFICATE SETUP (VISUAL DESIGNER) ───────────────
+// ─────────────── TAB 5: CERTIFICATE SETUP ───────────────
 function renderAdminCertificateSetupTab() {
   const hasTemplate = !!certTemplateDataUrl;
   const fieldLabels = {
@@ -1959,13 +2116,11 @@ function renderAdminCertificateSetupTab() {
         Upload your certificate JPG/PNG. Then drag the field boxes on the preview (or use X/Y inputs below) to position each piece of text.
         When it looks right, click <strong>Save Layout to Cloud</strong>. Every certificate will use these positions.
       </div>
-
       <div class="form-group" style="max-width:560px;">
         <label>Upload Certificate Image (JPG/PNG)</label>
         <input type="file" id="certTemplateFile" accept="image/png,image/jpeg,image/jpg" onchange="onCertTemplateUpload(this)">
       </div>
       <div id="certUploadStatus"></div>
-
       <div style="display:flex;gap:10px;margin:14px 0;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="saveCertLayoutToCloud()">💾 Save Layout to Cloud</button>
         <button class="btn btn-secondary" onclick="resetCertLayout()">↺ Reset to Defaults</button>
@@ -1973,7 +2128,6 @@ function renderAdminCertificateSetupTab() {
         ${hasTemplate ? `<button class="btn btn-danger" onclick="clearCertTemplate()">✕ Remove Image from Cloud</button>` : ''}
       </div>
     </div>
-
     <div class="panel">
       <h3>🎨 Visual Designer</h3>
       <div class="designer-wrap">
@@ -1988,8 +2142,7 @@ function renderAdminCertificateSetupTab() {
                 name: 'STUDENT NAME', class: 'IX', section: 'A', house: 'Ekta House',
                 event: '100m Sprint', rank: 'First', date: '08 October 2026'
               }[f];
-              return `<div class="designer-field" id="df-${f}"
-                data-field="${f}"
+              return `<div class="designer-field" id="df-${f}" data-field="${f}"
                 style="left:${c.x}%; top:${c.y}%; font-size:${c.size}px; font-weight:${c.weight}; text-align:${c.align}; color:${c.color};"
                 onclick="selectDesignerField('${f}')"
                 onmousedown="startDrag(event, '${f}')"
@@ -1997,9 +2150,8 @@ function renderAdminCertificateSetupTab() {
               >${esc(sampleText)}</div>`;
             }).join('')}
           </div>
-          <div style="margin-top:10px;font-size:12px;color:var(--muted);">💡 Tip: click a field to select it, then drag it. You can also fine-tune with the X / Y inputs.</div>
+          <div style="margin-top:10px;font-size:12px;color:var(--muted);">💡 Click a field to select, then drag it. Or use X / Y inputs to fine-tune.</div>
         </div>
-
         <div class="designer-controls">
           <div>
             <label style="font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;">Select Field</label>
@@ -2047,34 +2199,20 @@ function renderDesignerFieldControls() {
     <div style="padding:14px;border-radius:12px;border:1px solid var(--border);background:rgba(45,212,191,0.06);">
       <div style="font-weight:700;color:var(--gold);margin-bottom:10px;font-size:13px;">Editing: ${esc(label)}</div>
       <div class="designer-coord">
-        <div class="form-group">
-          <label>X %</label>
-          <input type="number" step="0.1" min="0" max="100" value="${c.x}" oninput="updateDesignerField('${f}', 'x', parseFloat(this.value))">
-        </div>
-        <div class="form-group">
-          <label>Y %</label>
-          <input type="number" step="0.1" min="0" max="100" value="${c.y}" oninput="updateDesignerField('${f}', 'y', parseFloat(this.value))">
-        </div>
-        <div class="form-group">
-          <label>Font size (px)</label>
-          <input type="number" step="1" min="6" max="80" value="${c.size}" oninput="updateDesignerField('${f}', 'size', parseFloat(this.value))">
-        </div>
-        <div class="form-group">
-          <label>Weight</label>
+        <div class="form-group"><label>X %</label><input type="number" step="0.1" min="0" max="100" value="${c.x}" oninput="updateDesignerField('${f}', 'x', parseFloat(this.value))"></div>
+        <div class="form-group"><label>Y %</label><input type="number" step="0.1" min="0" max="100" value="${c.y}" oninput="updateDesignerField('${f}', 'y', parseFloat(this.value))"></div>
+        <div class="form-group"><label>Font size (px)</label><input type="number" step="1" min="6" max="80" value="${c.size}" oninput="updateDesignerField('${f}', 'size', parseFloat(this.value))"></div>
+        <div class="form-group"><label>Weight</label>
           <select onchange="updateDesignerField('${f}', 'weight', parseInt(this.value, 10))">
             ${[400,500,600,700,800].map(w => `<option value="${w}" ${c.weight===w?'selected':''}>${w}</option>`).join('')}
           </select>
         </div>
-        <div class="form-group">
-          <label>Align</label>
+        <div class="form-group"><label>Align</label>
           <select onchange="updateDesignerField('${f}', 'align', this.value)">
             ${['left','center','right'].map(a => `<option value="${a}" ${c.align===a?'selected':''}>${a}</option>`).join('')}
           </select>
         </div>
-        <div class="form-group">
-          <label>Color</label>
-          <input type="color" value="${c.color}" oninput="updateDesignerField('${f}', 'color', this.value)">
-        </div>
+        <div class="form-group"><label>Color</label><input type="color" value="${c.color}" oninput="updateDesignerField('${f}', 'color', this.value)"></div>
       </div>
     </div>
   `;
@@ -2096,32 +2234,21 @@ function updateDesignerField(f, prop, value) {
 }
 
 function startDrag(e, field) {
-  e.preventDefault();
-  e.stopPropagation();
+  e.preventDefault(); e.stopPropagation();
   designerActiveField = field;
   selectDesignerField(field);
   const canvas = document.getElementById('designerCanvas');
   if(!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  designerCanvasRect = rect;
-  designerDragging = { field, rect };
+  designerCanvasRect = canvas.getBoundingClientRect();
+  designerDragging = { field };
   const el = document.getElementById('df-' + field);
   if(el) el.classList.add('dragging');
 }
-
-function onDesignerMouseMove(e) {
-  if(!designerDragging) return;
-  moveDesignerField(e.clientX, e.clientY);
-}
-
+function onDesignerMouseMove(e) { if(!designerDragging) return; moveDesignerField(e.clientX, e.clientY); }
 function onDesignerTouchMove(e) {
   if(!designerDragging) return;
-  if(e.touches && e.touches[0]) {
-    e.preventDefault();
-    moveDesignerField(e.touches[0].clientX, e.touches[0].clientY);
-  }
+  if(e.touches && e.touches[0]) { e.preventDefault(); moveDesignerField(e.touches[0].clientX, e.touches[0].clientY); }
 }
-
 function moveDesignerField(clientX, clientY) {
   if(!designerDragging || !designerCanvasRect) return;
   const rect = designerCanvasRect;
@@ -2140,7 +2267,6 @@ function moveDesignerField(clientX, clientY) {
     if(inputs[1]) inputs[1].value = y;
   }
 }
-
 function onDesignerMouseUp() {
   if(!designerDragging) return;
   const el = document.getElementById('df-' + designerDragging.field);
@@ -2151,27 +2277,21 @@ function onDesignerMouseUp() {
 async function saveCertLayoutToCloud() {
   const status = document.getElementById('certUploadStatus');
   const res = await saveCertSetting(CERT_KEY_LAYOUT, JSON.stringify(certLayout));
-  if(res.error) {
-    if(status) status.innerHTML = `<div class="alert alert-error">❌ Layout save failed: ${esc(res.error)}</div>`;
-    return;
-  }
-  showToast('✅ Layout saved to cloud! All devices will use it.', 'success');
-  if(status) status.innerHTML = `<div class="alert alert-success">✅ Layout saved to cloud at ${esc(new Date().toLocaleTimeString())}</div>`;
+  if(res.error) { if(status) status.innerHTML = `<div class="alert alert-error">❌ Layout save failed: ${esc(res.error)}</div>`; return; }
+  showToast('✅ Layout saved to cloud!', 'success');
+  if(status) status.innerHTML = `<div class="alert alert-success">✅ Layout saved at ${esc(new Date().toLocaleTimeString())}</div>`;
 }
 
 function resetCertLayout() {
-  if(!confirm('Reset all field positions to defaults? (You still need to click Save Layout to make it permanent.)')) return;
+  if(!confirm('Reset all field positions to defaults?')) return;
   certLayout = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
   Object.keys(certLayout).forEach(f => {
     const el = document.getElementById('df-' + f);
     if(el) {
       const c = certLayout[f];
-      el.style.left = c.x + '%';
-      el.style.top = c.y + '%';
-      el.style.fontSize = c.size + 'px';
-      el.style.fontWeight = c.weight;
-      el.style.textAlign = c.align;
-      el.style.color = c.color;
+      el.style.left = c.x + '%'; el.style.top = c.y + '%';
+      el.style.fontSize = c.size + 'px'; el.style.fontWeight = c.weight;
+      el.style.textAlign = c.align; el.style.color = c.color;
     }
   });
   renderDesignerFieldControls();
@@ -2181,64 +2301,48 @@ function resetCertLayout() {
 async function onCertTemplateUpload(input) {
   const file = input.files?.[0];
   if(!file) return;
-  if(!/image\/(png|jpe?g)/.test(file.type)) {
-    showToast('Please upload a JPG or PNG image', 'error');
-    return;
-  }
+  if(!/image\/(png|jpe?g)/.test(file.type)) { showToast('Please upload a JPG or PNG image', 'error'); return; }
   const status = document.getElementById('certUploadStatus');
   status.innerHTML = `<div class="alert alert-info">Compressing and uploading to cloud…</div>`;
-
   const reader = new FileReader();
   reader.onload = async (ev) => {
     try {
-      const rawDataUrl = ev.target.result;
-      const compressed = await compressImageDataUrl(rawDataUrl, 1600, 0.85);
+      const compressed = await compressImageDataUrl(ev.target.result, 1600, 0.85);
       const result = await saveCertSetting(CERT_KEY_IMAGE, compressed);
-      if(result.error) {
-        status.innerHTML = `<div class="alert alert-error">❌ Cloud save failed: ${esc(result.error)}</div>`;
-        return;
-      }
-      const metaResult = await saveCertSetting(CERT_KEY_META, JSON.stringify({ name: file.name || 'certificate.jpg', uploaded_at: new Date().toISOString() }));
+      if(result.error) { status.innerHTML = `<div class="alert alert-error">❌ Cloud save failed: ${esc(result.error)}</div>`; return; }
+      await saveCertSetting(CERT_KEY_META, JSON.stringify({ name: file.name, uploaded_at: new Date().toISOString() }));
       certTemplateDataUrl = compressed;
-      certTemplateName = file.name || 'certificate.jpg';
+      certTemplateName = file.name;
       status.innerHTML = `<div class="alert alert-success">✅ Image uploaded to cloud!</div>`;
-      showToast('Certificate image saved to cloud', 'success');
+      showToast('Certificate image saved', 'success');
       setTimeout(() => switchAdminTab('cert'), 700);
-    } catch(e) {
-      status.innerHTML = `<div class="alert alert-error">❌ ${esc(e.message)}</div>`;
-    }
+    } catch(e) { status.innerHTML = `<div class="alert alert-error">❌ ${esc(e.message)}</div>`; }
   };
-  reader.onerror = () => showToast('Could not read the file', 'error');
   reader.readAsDataURL(file);
 }
 
 async function reloadCertTemplate() {
-  showToast('Reloading from cloud…', 'info');
+  showToast('Reloading…', 'info');
   await loadCertificateConfigFromCloud();
   switchAdminTab('cert');
 }
 
 async function clearCertTemplate() {
-  if(!confirm('Remove the certificate image from cloud? Other devices will lose it too.')) return;
-  if(db) {
-    await db.from('sports_settings').delete().eq('key', CERT_KEY_IMAGE);
-    await db.from('sports_settings').delete().eq('key', CERT_KEY_META);
-  }
-  certTemplateDataUrl = null;
-  certTemplateName = '';
-  showToast('Image removed from cloud', 'warning');
+  if(!confirm('Remove certificate image from cloud?')) return;
+  if(db) { await db.from('sports_settings').delete().eq('key', CERT_KEY_IMAGE); await db.from('sports_settings').delete().eq('key', CERT_KEY_META); }
+  certTemplateDataUrl = null; certTemplateName = '';
+  showToast('Removed from cloud', 'warning');
   switchAdminTab('cert');
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  PUBLIC: POINTS-WISE RESULTS
+//  PUBLIC POINTS-WISE
 // ═══════════════════════════════════════════════════════════════
 function showResultsPointsWise() {
   const page = document.getElementById('page-dynamic');
   if(!allResults.length) {
     page.innerHTML = `<div class="page-header"><h1>Points Wise Results</h1></div><div class="panel"><div style="text-align:center;color:var(--muted);padding:30px;">No results yet.</div></div><button class="btn btn-secondary" onclick="showPage('home','🏆 Sports Day Championship')">← Back</button>`;
-    showPage('dynamic', 'Points Wise');
-    return;
+    showPage('dynamic', 'Points Wise'); return;
   }
   const houseColors = HOUSE_ORDER.map(h => HOUSE_META[houseKey(h)]?.color || '#fff');
   const houseTotals = Object.fromEntries(HOUSE_ORDER.map(h => [h, 0]));
@@ -2248,9 +2352,9 @@ function showResultsPointsWise() {
     const pts = noteData?.points || PLACE_POINTS;
     const cells = HOUSE_ORDER.map(h => {
       let val = '—';
-      if(parseHousePositionValue(r.first_place).includes(h))  { val = pts.first_place ?? 5;  houseTotals[h] += val; }
+      if(parseHousePositionValue(r.first_place).includes(h))  { val = pts.first_place ?? 5; houseTotals[h] += val; }
       else if(parseHousePositionValue(r.second_place).includes(h)) { val = pts.second_place ?? 3; houseTotals[h] += val; }
-      else if(parseHousePositionValue(r.third_place).includes(h))  { val = pts.third_place ?? 1;  houseTotals[h] += val; }
+      else if(parseHousePositionValue(r.third_place).includes(h))  { val = pts.third_place ?? 1; houseTotals[h] += val; }
       else if(parseHousePositionValue(r.fourth_place).includes(h)) { val = pts.fourth_place ?? 0; houseTotals[h] += val; }
       const isTop = val === 5;
       return `<td style="text-align:center;font-size:15px;font-weight:${isTop?'700':'400'};color:${isTop?'var(--gold)':'var(--text)'};">${val}</td>`;
@@ -2268,12 +2372,10 @@ function showResultsPointsWise() {
     <div class="panel">
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
-          <thead>
-            <tr style="background:var(--surface);">
-              <th style="padding:12px 14px;text-align:left;border-bottom:2px solid var(--gold);color:var(--muted);font-size:11px;text-transform:uppercase;min-width:200px;">Event</th>
-              ${HOUSE_ORDER.map((h,i) => `<th style="padding:12px 14px;text-align:center;border-bottom:2px solid ${houseColors[i]};color:${houseColors[i]};font-size:12px;min-width:120px;">${esc(h)}</th>`).join('')}
-            </tr>
-          </thead>
+          <thead><tr style="background:var(--surface);">
+            <th style="padding:12px 14px;text-align:left;border-bottom:2px solid var(--gold);color:var(--muted);font-size:11px;text-transform:uppercase;min-width:200px;">Event</th>
+            ${HOUSE_ORDER.map((h,i) => `<th style="padding:12px 14px;text-align:center;border-bottom:2px solid ${houseColors[i]};color:${houseColors[i]};font-size:12px;min-width:120px;">${esc(h)}</th>`).join('')}
+          </tr></thead>
           <tbody>
             ${rows}
             <tr style="border-top:2px solid var(--gold);">
@@ -2299,10 +2401,10 @@ async function showCertificateCenter() {
   page.innerHTML = `
     <div class="page-header">
       <h1>🎓 E-Certificates</h1>
-      <p>Generate certificates for First, Second, and Third place holders of any event.</p>
+      <p>Generate certificates for First, Second, and Third place holders.</p>
     </div>
     <div class="panel">
-      ${!certTemplateDataUrl ? `<div class="alert alert-warning">⚠️ No certificate template in cloud yet. Ask the admin to upload one from <strong>Admin → Certificate Setup</strong>.</div>` : ''}
+      ${!certTemplateDataUrl ? `<div class="alert alert-warning">⚠️ No certificate template yet. Ask admin to upload from <strong>Admin → Certificate Setup</strong>.</div>` : ''}
       <div class="form-group" style="max-width:420px;">
         <label>Select Event</label>
         <select id="certEventSelect" onchange="renderCertificateCards()">
@@ -2310,9 +2412,7 @@ async function showCertificateCenter() {
           ${eventsWithResult.map(e => `<option value="${e.id}">${esc(e.event_name)} — ${esc(getDayLabel(e.event_date))}${e.event_date ? ' ('+e.event_date+')' : ''}</option>`).join('')}
         </select>
       </div>
-      <div class="alert alert-info" style="margin-top:12px;">
-        Certificates open in a print-ready window. Print or save as PDF. Only First, Second, and Third place participants receive certificates.
-      </div>
+      <div class="alert alert-info" style="margin-top:12px;">Only First, Second, and Third place participants receive certificates.</div>
       <div id="certCards" class="cert-preview-grid"></div>
     </div>
     <button class="btn btn-secondary" onclick="showPage('home','🏆 Sports Day Championship')">← Back</button>`;
@@ -2323,19 +2423,15 @@ async function renderCertificateCards() {
   const eid = parseInt(document.getElementById('certEventSelect').value, 10);
   const container = document.getElementById('certCards');
   if(!eid) { container.innerHTML = ''; return; }
-  container.innerHTML = `<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted);">Loading certificates…</div>`;
-
+  container.innerHTML = `<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted);">Loading…</div>`;
   const result = allResults.find(r => parseInt(r.event_id, 10) === eid);
   const event = allEvents.find(e => e.id === eid);
   if(!result || !event) { container.innerHTML = `<div class="alert alert-error">No result for this event.</div>`; return; }
-
   const { data: participants } = await db.from('sports_participants').select('*').eq('event_id', eid);
   const rows = participants || [];
-
   const firstHouses = parseHousePositionValue(result.first_place);
   const secondHouses = parseHousePositionValue(result.second_place);
   const thirdHouses = parseHousePositionValue(result.third_place);
-
   const certEntries = [];
   rows.forEach(p => {
     const h = canonicalHouseName(p.house);
@@ -2343,12 +2439,7 @@ async function renderCertificateCards() {
     else if(secondHouses.includes(h)) certEntries.push({ ...p, place: 'Second Place', medal: '🥈' });
     else if(thirdHouses.includes(h)) certEntries.push({ ...p, place: 'Third Place', medal: '🥉' });
   });
-
-  if(!certEntries.length) {
-    container.innerHTML = `<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted);">No First/Second/Third place participants found for this event.</div>`;
-    return;
-  }
-
+  if(!certEntries.length) { container.innerHTML = `<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted);">No place holders found.</div>`; return; }
   container.innerHTML = certEntries.map((e, i) => `
     <div class="cert-card">
       <div class="medal">${e.medal}</div>
@@ -2362,16 +2453,10 @@ async function renderCertificateCards() {
       </div>
     </div>
   `).join('');
-
   window.__certEntries = certEntries.map(e => ({
-    student_name: e.student_name,
-    admission_no: e.admission_no,
-    class: e.class,
-    section: e.section,
-    house: e.house,
-    place: e.place,
-    event_name: event.event_name,
-    event_date: event.event_date
+    student_name: e.student_name, admission_no: e.admission_no,
+    class: e.class, section: e.section, house: e.house, place: e.place,
+    event_name: event.event_name, event_date: event.event_date
   }));
 }
 
@@ -2379,27 +2464,19 @@ function buildCertificateHtml(entry) {
   const dateStr = entry.event_date
     ? new Date(entry.event_date + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' })
     : new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' });
-
   const bgImg = certTemplateDataUrl
     ? `<img src="${certTemplateDataUrl}" style="width:100%;display:block;" alt="Certificate">`
     : `<div style="width:100%;aspect-ratio:1200/850;background:linear-gradient(135deg,#fff9ec,#f4e8c8);border:6px double #bfa76a;"></div>`;
-
   const fieldText = {
     name: String(entry.student_name || '').toUpperCase(),
-    class: entry.class || '',
-    section: entry.section || '',
-    house: entry.house || '',
-    event: entry.event_name || '',
-    rank: String(entry.place || '').replace(' Place', ''),
-    date: dateStr
+    class: entry.class || '', section: entry.section || '', house: entry.house || '',
+    event: entry.event_name || '', rank: String(entry.place || '').replace(' Place', ''), date: dateStr
   };
-
   const fieldsHtml = Object.keys(certLayout).map(f => {
     const c = certLayout[f];
     const alignTransform = c.align === 'center' ? 'translateX(-50%)' : c.align === 'right' ? 'translateX(-100%)' : 'translateX(0)';
     return `<div class="text" style="left:${c.x}%; top:${c.y}%; transform:translateY(-50%) ${alignTransform}; font-size:${c.size}px; font-weight:${c.weight}; text-align:${c.align}; color:${c.color}; white-space:nowrap;">${esc(fieldText[f])}</div>`;
   }).join('');
-
   return `<!DOCTYPE html>
 <html><head>
 <meta charset="UTF-8"><title>Certificate — ${esc(entry.student_name)}</title>
@@ -2412,11 +2489,7 @@ function buildCertificateHtml(entry) {
   .toolbar button { padding:10px 16px; border-radius:8px; border:none; cursor:pointer; font-size:14px; font-weight:600; }
   .print-btn { background:#0f8f86; color:#fff; }
   .close-btn { background:#e5e7eb; color:#111; }
-  @media print {
-    body { background:white; padding:0; }
-    .toolbar { display:none; }
-    .sheet { width:100%; max-width:100%; margin:0; }
-  }
+  @media print { body { background:white; padding:0; } .toolbar { display:none; } .sheet { width:100%; max-width:100%; margin:0; } }
 </style>
 </head>
 <body>
@@ -2424,10 +2497,7 @@ function buildCertificateHtml(entry) {
     <button class="print-btn" onclick="window.print()">🖨️ Print / Save PDF</button>
     <button class="close-btn" onclick="window.close()">✕ Close</button>
   </div>
-  <div class="sheet">
-    ${bgImg}
-    ${fieldsHtml}
-  </div>
+  <div class="sheet">${bgImg}${fieldsHtml}</div>
 </body></html>`;
 }
 
@@ -2435,22 +2505,15 @@ function openCertificate(index) {
   const entry = window.__certEntries?.[index];
   if(!entry) { showToast('Certificate data missing', 'error'); return; }
   const win = window.open('', '_blank', 'width=900,height=1100');
-  if(!win) { showToast('Pop-up blocked. Please allow pop-ups.', 'error'); return; }
-  win.document.open();
-  win.document.write(buildCertificateHtml(entry));
-  win.document.close();
-  win.focus();
+  if(!win) { showToast('Pop-up blocked', 'error'); return; }
+  win.document.open(); win.document.write(buildCertificateHtml(entry)); win.document.close(); win.focus();
 }
-
 function printCertificateDirect(index) {
   const entry = window.__certEntries?.[index];
   if(!entry) { showToast('Certificate data missing', 'error'); return; }
   const win = window.open('', '_blank', 'width=900,height=1100');
-  if(!win) { showToast('Pop-up blocked. Please allow pop-ups.', 'error'); return; }
-  win.document.open();
-  win.document.write(buildCertificateHtml(entry));
-  win.document.close();
-  win.focus();
+  if(!win) { showToast('Pop-up blocked', 'error'); return; }
+  win.document.open(); win.document.write(buildCertificateHtml(entry)); win.document.close(); win.focus();
   setTimeout(() => { try { win.print(); } catch(e){} }, 700);
 }
 
